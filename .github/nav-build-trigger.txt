@@ -1,1 +1,1 @@
-Build Sonify after live editorial home redesign, artist portrait fix, popular Pakistan/India sections, and remote music updates.
+Build Sonify after startup crash fix, resilient artist portrait loading, network timeout protection, and header stability polish.
