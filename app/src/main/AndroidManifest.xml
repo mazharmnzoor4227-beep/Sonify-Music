@@ -10,7 +10,7 @@
         android:label="Sonify"
         android:theme="@style/Theme.Sonify">
         <activity
-            android:name=".SonifyActivity"
+            android:name=".SonifyActivityV3"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
