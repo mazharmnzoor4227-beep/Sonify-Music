@@ -14,8 +14,8 @@
         {"title":"Iraaday","artist":"Abdul Hannan & Rovalio","query":"Iraaday Abdul Hannan Rovalio","artistId":"abdul-hannan"},
         {"title":"Bikhra","artist":"Abdul Hannan & Rovalio","query":"Bikhra Abdul Hannan Rovalio","artistId":"abdul-hannan"},
         {"title":"Afsanay","artist":"Young Stunners","query":"Afsanay Young Stunners","artistId":"young-stunners"},
-        {"title":"Pasoori","artist":"Ali Sethi & Shae Gill","query":"Pasoori Ali Sethi Shae Gill","artistId":"ali-zafar"},
-        {"title":"Jo Tu Na Mila","artist":"Asim Azhar","query":"Jo Tu Na Mila Asim Azhar","artistId":"atif-aslam"},
+        {"title":"Pasoori","artist":"Ali Sethi & Shae Gill","query":"Pasoori Ali Sethi Shae Gill","artistId":"ali-sethi"},
+        {"title":"Jo Tu Na Mila","artist":"Asim Azhar","query":"Jo Tu Na Mila Asim Azhar","artistId":"asim-azhar"},
         {"title":"Afreen Afreen","artist":"Rahat Fateh Ali Khan & Momina Mustehsan","query":"Afreen Afreen Rahat Fateh Ali Khan Momina","artistId":"rahat-fateh-ali-khan"}
       ]
     },
@@ -30,7 +30,7 @@
         {"title":"O Maahi","artist":"Arijit Singh","query":"O Maahi Arijit Singh","artistId":"arijit-singh"},
         {"title":"Apna Bana Le","artist":"Arijit Singh","query":"Apna Bana Le Arijit Singh","artistId":"arijit-singh"},
         {"title":"Satranga","artist":"Arijit Singh","query":"Satranga Arijit Singh","artistId":"arijit-singh"},
-        {"title":"Heeriye","artist":"Jasleen Royal & Arijit Singh","query":"Heeriye Jasleen Royal Arijit Singh","artistId":"arijit-singh"},
+        {"title":"Heeriye","artist":"Jasleen Royal & Arijit Singh","query":"Heeriye Jasleen Royal Arijit Singh","artistId":"jasleen-royal"},
         {"title":"Ve Kamleya","artist":"Arijit Singh & Shreya Ghoshal","query":"Ve Kamleya Arijit Singh Shreya Ghoshal","artistId":"shreya-ghoshal"}
       ]
     }
