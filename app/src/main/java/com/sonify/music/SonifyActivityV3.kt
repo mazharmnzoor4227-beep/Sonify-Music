@@ -537,7 +537,7 @@ private fun V3MorphingPlayer(
             shape = RoundedCornerShape(radius),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(horizontal = sidePad, bottom = bottomSpace)
+                .padding(start = sidePad, end = sidePad, bottom = bottomSpace)
                 .fillMaxWidth()
                 .height(playerHeight)
                 .pointerInput(Unit) {
