@@ -529,8 +529,10 @@ private fun V3MorphingPlayer(
         val bottomSpace = (navReserve.value * fraction).dp
         val sidePad = (7f * fraction).dp
         val radius = (16f * fraction).dp
-        val expandedAlpha = (1f - fraction * 1.65f).coerceIn(0f, 1f)
-        val miniAlpha = ((fraction - 0.35f) / 0.65f).coerceIn(0f, 1f)
+        // One visual player only: expanded content fades away before the compact controls
+        // become fully visible, so there is never a second mini-player sitting behind it.
+        val expandedAlpha = (1f - fraction * 1.75f).coerceIn(0f, 1f)
+        val miniAlpha = ((fraction - 0.42f) / 0.58f).coerceIn(0f, 1f)
 
         Surface(
             color = if (fraction < .55f) V3Bg else Color(0xFF181818),
@@ -540,7 +542,7 @@ private fun V3MorphingPlayer(
                 .padding(start = sidePad, end = sidePad, bottom = bottomSpace)
                 .fillMaxWidth()
                 .height(playerHeight)
-                .pointerInput(Unit) {
+                .pointerInput(track.id) {
                     detectVerticalDragGestures(
                         onDragStart = {
                             dragging = true
