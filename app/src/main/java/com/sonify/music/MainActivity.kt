@@ -6,10 +6,10 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -44,10 +44,11 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.google.common.util.concurrent.ListenableFuture
 import com.sonify.music.data.DemoCatalog
 import com.sonify.music.model.Track
 import com.sonify.music.playback.PlaybackService
-import java.util.concurrent.Executors
+import java.util.concurrent.Executor
 import kotlinx.coroutines.delay
 
 private val Bg = Color(0xFF050505)
@@ -58,7 +59,7 @@ private val Muted = Color(0xFF9B9B9B)
 private val Accent = Color(0xFFB7FF45)
 
 class MainActivity : ComponentActivity() {
-    private var controllerFuture: com.google.common.util.concurrent.ListenableFuture<MediaController>? = null
+    private var controllerFuture: ListenableFuture<MediaController>? = null
     private var controllerState by mutableStateOf<MediaController?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -72,10 +73,11 @@ class MainActivity : ComponentActivity() {
         }
 
         val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
+        val uiExecutor = Executor { command -> runOnUiThread(command) }
         controllerFuture = MediaController.Builder(this, token).buildAsync().also { future ->
             future.addListener(
                 { controllerState = runCatching { future.get() }.getOrNull() },
-                mainExecutor
+                uiExecutor
             )
         }
 
@@ -104,6 +106,7 @@ private fun Track.toMediaItem(): MediaItem = MediaItem.Builder()
 
 @Composable
 private fun SonifyApp(controller: MediaController?) {
+    val context = LocalContext.current
     var tab by remember { mutableIntStateOf(0) }
     var current by remember { mutableStateOf(DemoCatalog.featured.first()) }
     var nowPlayingOpen by remember { mutableStateOf(false) }
@@ -111,8 +114,9 @@ private fun SonifyApp(controller: MediaController?) {
     var positionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(1L) }
     var searchSeed by remember { mutableStateOf("") }
+    var shuffle by remember { mutableStateOf(false) }
+    var repeatAll by remember { mutableStateOf(false) }
     val liked = remember { mutableStateListOf<String>() }
-    val snackbar = remember { SnackbarHostState() }
 
     DisposableEffect(controller) {
         if (controller == null) return@DisposableEffect onDispose { }
@@ -127,38 +131,33 @@ private fun SonifyApp(controller: MediaController?) {
                     DemoCatalog.allTracks.firstOrNull { it.id == id }?.let { current = it }
                 }
             }
-
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                isPlaying = controller.isPlaying
-            }
         }
-
         controller.addListener(listener)
         isPlaying = controller.isPlaying
-
+        shuffle = controller.shuffleModeEnabled
+        repeatAll = controller.repeatMode == Player.REPEAT_MODE_ALL
         onDispose { controller.removeListener(listener) }
     }
 
     LaunchedEffect(controller) {
         while (true) {
-            val p = controller
-            if (p != null) {
-                positionMs = p.currentPosition.coerceAtLeast(0L)
-                durationMs = p.duration.takeIf { it > 0 } ?: 1L
-                p.currentMediaItem?.mediaId?.let { id ->
+            controller?.let { player ->
+                positionMs = player.currentPosition.coerceAtLeast(0L)
+                durationMs = player.duration.takeIf { it > 0L } ?: 1L
+                isPlaying = player.isPlaying
+                player.currentMediaItem?.mediaId?.let { id ->
                     DemoCatalog.allTracks.firstOrNull { it.id == id }?.let { current = it }
                 }
-                isPlaying = p.isPlaying
             }
-            delay(500)
+            delay(400)
         }
     }
 
     fun playTrack(track: Track) {
         val player = controller ?: return
         val queue = DemoCatalog.allTracks
-        val start = queue.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
-        player.setMediaItems(queue.map { it.toMediaItem() }, start, 0L)
+        val index = queue.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
+        player.setMediaItems(queue.map { it.toMediaItem() }, index, 0L)
         player.prepare()
         player.play()
         current = track
@@ -176,14 +175,14 @@ private fun SonifyApp(controller: MediaController?) {
     }
 
     fun previous() {
-        controller?.let {
-            if (it.hasPreviousMediaItem()) it.seekToPreviousMediaItem() else it.seekTo(0L)
+        controller?.let { player ->
+            if (player.hasPreviousMediaItem()) player.seekToPreviousMediaItem() else player.seekTo(0L)
         }
     }
 
     fun next() {
-        controller?.let {
-            if (it.hasNextMediaItem()) it.seekToNextMediaItem()
+        controller?.let { player ->
+            if (player.hasNextMediaItem()) player.seekToNextMediaItem()
         }
     }
 
@@ -198,24 +197,17 @@ private fun SonifyApp(controller: MediaController?) {
     ) {
         Scaffold(
             containerColor = Bg,
-            snackbarHost = { SnackbarHost(snackbar) },
             bottomBar = {
                 Column {
-                    AnimatedVisibility(
-                        visible = true,
-                        enter = fadeIn(tween(140)),
-                        exit = fadeOut(tween(120))
-                    ) {
-                        MiniPlayer(
-                            track = current,
-                            isPlaying = isPlaying,
-                            progress = (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f),
-                            onOpen = { nowPlayingOpen = true },
-                            onPrevious = ::previous,
-                            onToggle = ::togglePlayback,
-                            onNext = ::next
-                        )
-                    }
+                    MiniPlayer(
+                        track = current,
+                        isPlaying = isPlaying,
+                        progress = (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f),
+                        onOpen = { nowPlayingOpen = true },
+                        onPrevious = ::previous,
+                        onToggle = ::togglePlayback,
+                        onNext = ::next
+                    )
                     NavigationBar(containerColor = Color(0xFA080808)) {
                         NavigationBarItem(
                             selected = tab == 0,
@@ -245,9 +237,7 @@ private fun SonifyApp(controller: MediaController?) {
             Box(Modifier.padding(padding)) {
                 AnimatedContent(
                     targetState = tab,
-                    transitionSpec = {
-                        fadeIn(tween(150)) togetherWith fadeOut(tween(120))
-                    },
+                    transitionSpec = { fadeIn(tween(140)) togetherWith fadeOut(tween(100)) },
                     label = "tabs"
                 ) { selected ->
                     when (selected) {
@@ -258,7 +248,7 @@ private fun SonifyApp(controller: MediaController?) {
                                 tab = 1
                             },
                             onNotification = {
-                                LaunchedEffect(Unit) { snackbar.showSnackbar("You're all caught up") }
+                                Toast.makeText(context, "You're all caught up", Toast.LENGTH_SHORT).show()
                             }
                         )
 
@@ -271,10 +261,7 @@ private fun SonifyApp(controller: MediaController?) {
                             }
                         )
 
-                        else -> LibraryScreen(
-                            liked = liked,
-                            onTrack = ::playTrack
-                        )
+                        else -> LibraryScreen(liked = liked, onTrack = ::playTrack)
                     }
                 }
             }
@@ -286,30 +273,38 @@ private fun SonifyApp(controller: MediaController?) {
                     positionMs = positionMs,
                     durationMs = durationMs,
                     liked = liked.contains(current.id),
-                    shuffle = controller?.shuffleModeEnabled == true,
-                    repeatAll = controller?.repeatMode == Player.REPEAT_MODE_ALL,
+                    shuffle = shuffle,
+                    repeatAll = repeatAll,
                     onClose = { nowPlayingOpen = false },
                     onPrevious = ::previous,
                     onToggle = ::togglePlayback,
                     onNext = ::next,
-                    onSeek = { value -> controller?.seekTo(value) },
+                    onSeek = { controller?.seekTo(it) },
                     onToggleLike = {
                         if (liked.contains(current.id)) liked.remove(current.id) else liked.add(current.id)
                     },
                     onToggleShuffle = {
-                        controller?.shuffleModeEnabled = !(controller?.shuffleModeEnabled ?: false)
+                        controller?.let { player ->
+                            player.shuffleModeEnabled = !player.shuffleModeEnabled
+                            shuffle = player.shuffleModeEnabled
+                        }
                     },
                     onToggleRepeat = {
-                        controller?.repeatMode = if (controller.repeatMode == Player.REPEAT_MODE_ALL) {
-                            Player.REPEAT_MODE_OFF
-                        } else {
-                            Player.REPEAT_MODE_ALL
+                        controller?.let { player ->
+                            player.repeatMode = if (player.repeatMode == Player.REPEAT_MODE_ALL) {
+                                Player.REPEAT_MODE_OFF
+                            } else {
+                                Player.REPEAT_MODE_ALL
+                            }
+                            repeatAll = player.repeatMode == Player.REPEAT_MODE_ALL
                         }
                     },
                     onLyrics = {
-                        LaunchedEffect(Unit) {
-                            snackbar.showSnackbar("Lyrics will appear when the live catalog provides them")
-                        }
+                        Toast.makeText(
+                            context,
+                            "Lyrics will appear when the live catalog provides them",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
                 )
             }
@@ -341,9 +336,7 @@ private fun HomeScreen(
         item { SectionTitle("For you", "Fresh picks for your next session") }
         item {
             LazyRow(contentPadding = PaddingValues(horizontal = 20.dp)) {
-                items(DemoCatalog.featured, key = { it.id }) { track ->
-                    AlbumCard(track, onTrack)
-                }
+                items(DemoCatalog.featured, key = { it.id }) { track -> AlbumCard(track, onTrack) }
             }
         }
 
@@ -353,25 +346,19 @@ private fun HomeScreen(
                 contentPadding = PaddingValues(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(
-                    listOf("Hindi Sad", "Pakistani Sad", "Heartbreak", "Slow & Acoustic")
-                ) { label ->
+                items(listOf("Hindi Sad", "Pakistani Sad", "Heartbreak", "Slow & Acoustic")) { label ->
                     MoodPill(label) { onCategory(label) }
                 }
             }
         }
 
         item { SectionTitle("Trending now", "Most played in Sonify Preview") }
-        items(DemoCatalog.trending, key = { it.id }) { track ->
-            TrackRow(track = track, onTrack = onTrack)
-        }
+        items(DemoCatalog.trending, key = { it.id }) { track -> TrackRow(track, onTrack) }
 
         item { SectionTitle("Late night", "Dark, slow and cinematic") }
         item {
             LazyRow(contentPadding = PaddingValues(horizontal = 20.dp)) {
-                items(DemoCatalog.trending.reversed(), key = { it.id }) { track ->
-                    AlbumCard(track, onTrack)
-                }
+                items(DemoCatalog.trending.reversed(), key = { it.id }) { track -> AlbumCard(track, onTrack) }
             }
         }
     }
@@ -384,16 +371,11 @@ private fun HomeHeader(onNotification: () -> Unit) {
             .fillMaxWidth()
             .height(168.dp)
             .background(
-                Brush.verticalGradient(
-                    listOf(Color(0xFF18200B), Color(0xFF0A0D06), Bg)
-                )
+                Brush.verticalGradient(listOf(Color(0xFF18200B), Color(0xFF0A0D06), Bg))
             )
             .padding(horizontal = 20.dp, vertical = 18.dp)
     ) {
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
                     "SONIFY",
@@ -403,24 +385,12 @@ private fun HomeHeader(onNotification: () -> Unit) {
                     letterSpacing = 1.2.sp
                 )
                 Spacer(Modifier.height(5.dp))
-                Text(
-                    "Good evening",
-                    color = Text,
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Black
-                )
-                Text(
-                    "What do you want to hear?",
-                    color = Muted,
-                    fontSize = 14.sp
-                )
+                Text("Good evening", color = Text, fontSize = 28.sp, fontWeight = FontWeight.Black)
+                Text("What do you want to hear?", color = Muted, fontSize = 14.sp)
             }
-
             IconButton(
                 onClick = onNotification,
-                modifier = Modifier
-                    .size(48.dp)
-                    .background(Color(0xFF1D2415), CircleShape)
+                modifier = Modifier.size(48.dp).background(Color(0xFF1D2415), CircleShape)
             ) {
                 Icon(Icons.Rounded.NotificationsNone, null, tint = Text)
             }
@@ -455,10 +425,7 @@ private fun MoodPill(label: String, onClick: () -> Unit) {
     Surface(
         color = Surface2,
         shape = RoundedCornerShape(18.dp),
-        modifier = Modifier
-            .width(146.dp)
-            .height(76.dp)
-            .clickable(onClick = onClick)
+        modifier = Modifier.width(146.dp).height(76.dp).clickable(onClick = onClick)
     ) {
         Box(Modifier.padding(14.dp)) {
             Icon(
@@ -486,13 +453,10 @@ private fun SearchScreen(
     onToggleLike: (String) -> Unit
 ) {
     var query by remember { mutableStateOf(initialQuery) }
-
-    LaunchedEffect(initialQuery) {
-        if (initialQuery.isNotBlank()) query = initialQuery
-    }
+    LaunchedEffect(initialQuery) { if (initialQuery.isNotBlank()) query = initialQuery }
 
     val results = remember(query) { DemoCatalog.search(query) }
-    val catalogCategory = query.equals("Hindi Sad", true) || query.equals("Pakistani Sad", true)
+    val liveCategory = query.equals("Hindi Sad", true) || query.equals("Pakistani Sad", true)
 
     LazyColumn(
         Modifier.fillMaxSize().background(Bg),
@@ -526,37 +490,33 @@ private fun SearchScreen(
                     cursorColor = Accent
                 )
             )
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(22.dp))
         }
 
-        if (catalogCategory) {
+        if (liveCategory) {
             item {
                 Surface(color = Surface2, shape = RoundedCornerShape(20.dp)) {
                     Column(Modifier.padding(18.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Rounded.LibraryMusic, null, tint = Accent)
-                            Spacer(Modifier.width(10.dp))
-                            Text(query, color = Text, fontWeight = FontWeight.Black, fontSize = 20.sp)
-                        }
-                        Spacer(Modifier.height(8.dp))
+                        Text(query, color = Text, fontWeight = FontWeight.Black, fontSize = 20.sp)
+                        Spacer(Modifier.height(6.dp))
                         Text(
-                            "The category is ready. Real Hindi and Pakistani sad tracks will populate here when the live music catalog is connected.",
+                            "This category is ready. Real Hindi and Pakistani sad tracks will appear here after the live music catalog is connected.",
                             color = Muted,
                             lineHeight = 20.sp
                         )
                     }
                 }
-                Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(18.dp))
             }
         }
 
         if (results.isEmpty()) {
             item {
                 Column(
-                    Modifier.fillMaxWidth().padding(top = 24.dp),
+                    Modifier.fillMaxWidth().padding(top = 20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Icon(Icons.Rounded.MusicOff, null, tint = Muted, modifier = Modifier.size(42.dp))
+                    Icon(Icons.Rounded.MusicNote, null, tint = Muted, modifier = Modifier.size(40.dp))
                     Spacer(Modifier.height(10.dp))
                     Text("No preview tracks found", color = Text, fontWeight = FontWeight.Bold)
                     Text("Try another search", color = Muted)
@@ -583,10 +543,7 @@ private fun SearchResultRow(
     onToggleLike: () -> Unit
 ) {
     Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable { onTrack(track) }
-            .padding(vertical = 8.dp),
+        Modifier.fillMaxWidth().clickable { onTrack(track) }.padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Artwork(track, Modifier.size(58.dp))
@@ -606,10 +563,7 @@ private fun SearchResultRow(
 }
 
 @Composable
-private fun LibraryScreen(
-    liked: List<String>,
-    onTrack: (Track) -> Unit
-) {
+private fun LibraryScreen(liked: List<String>, onTrack: (Track) -> Unit) {
     val likedTracks = DemoCatalog.allTracks.filter { liked.contains(it.id) }
 
     LazyColumn(
@@ -618,34 +572,31 @@ private fun LibraryScreen(
     ) {
         item {
             Text("Your Library", color = Text, fontSize = 34.sp, fontWeight = FontWeight.Black)
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
             Text("Your music, one place.", color = Muted)
-            Spacer(Modifier.height(22.dp))
-        }
-
-        item {
+            Spacer(Modifier.height(20.dp))
             LibraryQuickRow(Icons.Rounded.Favorite, "Liked Songs", "${likedTracks.size} saved tracks")
-            LibraryQuickRow(Icons.Rounded.QueueMusic, "Playlists", "Create and organize mixes")
-            LibraryQuickRow(Icons.Rounded.Download, "Downloads", "Offline music will appear here")
-            Spacer(Modifier.height(22.dp))
+            LibraryQuickRow(Icons.Rounded.QueueMusic, "Playlists", "Your mixes")
+            LibraryQuickRow(Icons.Rounded.Download, "Downloads", "Offline music")
+            Spacer(Modifier.height(20.dp))
             Text("Liked tracks", color = Text, fontSize = 21.sp, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(8.dp))
         }
 
         if (likedTracks.isEmpty()) {
-            item {
-                Text("Tap the heart on a song to save it here.", color = Muted)
-            }
+            item { Text("Tap the heart on a song to save it here.", color = Muted) }
         } else {
-            items(likedTracks, key = { it.id }) { track ->
-                TrackRow(track, onTrack)
-            }
+            items(likedTracks, key = { it.id }) { track -> TrackRow(track, onTrack) }
         }
     }
 }
 
 @Composable
-private fun LibraryQuickRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, subtitle: String) {
+private fun LibraryQuickRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String
+) {
     Row(
         Modifier.fillMaxWidth().padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -653,9 +604,7 @@ private fun LibraryQuickRow(icon: androidx.compose.ui.graphics.vector.ImageVecto
         Box(
             Modifier.size(54.dp).clip(RoundedCornerShape(16.dp)).background(Surface2),
             contentAlignment = Alignment.Center
-        ) {
-            Icon(icon, null, tint = Accent)
-        }
+        ) { Icon(icon, null, tint = Accent) }
         Spacer(Modifier.width(14.dp))
         Column {
             Text(title, color = Text, fontWeight = FontWeight.Bold, fontSize = 17.sp)
@@ -674,12 +623,7 @@ private fun SectionTitle(title: String, subtitle: String) {
 
 @Composable
 private fun AlbumCard(track: Track, onTrack: (Track) -> Unit) {
-    Column(
-        Modifier
-            .width(154.dp)
-            .padding(end = 12.dp)
-            .clickable { onTrack(track) }
-    ) {
+    Column(Modifier.width(154.dp).padding(end = 12.dp).clickable { onTrack(track) }) {
         Artwork(track, Modifier.size(142.dp))
         Spacer(Modifier.height(10.dp))
         Text(track.title, color = Text, fontWeight = FontWeight.Bold, maxLines = 1)
@@ -690,10 +634,7 @@ private fun AlbumCard(track: Track, onTrack: (Track) -> Unit) {
 @Composable
 private fun TrackRow(track: Track, onTrack: (Track) -> Unit) {
     Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable { onTrack(track) }
-            .padding(horizontal = 20.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().clickable { onTrack(track) }.padding(horizontal = 20.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Artwork(track, Modifier.size(58.dp))
@@ -737,16 +678,13 @@ private fun MiniPlayer(
     Surface(color = Color(0xFF141414), modifier = Modifier.fillMaxWidth()) {
         Column {
             LinearProgressIndicator(
-                progress = { progress },
+                progress = progress,
                 modifier = Modifier.fillMaxWidth().height(2.dp),
                 color = Accent,
                 trackColor = Color(0xFF2A2A2A)
             )
             Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable { onOpen() }
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                Modifier.fillMaxWidth().clickable { onOpen() }.padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Artwork(track, Modifier.size(48.dp))
@@ -767,19 +705,11 @@ private fun MiniPlayer(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                IconButton(onClick = onPrevious) {
-                    Icon(Icons.Rounded.SkipPrevious, null, tint = Text)
-                }
+                IconButton(onClick = onPrevious) { Icon(Icons.Rounded.SkipPrevious, null, tint = Text) }
                 IconButton(onClick = onToggle) {
-                    Icon(
-                        if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                        null,
-                        tint = Text
-                    )
+                    Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, tint = Text)
                 }
-                IconButton(onClick = onNext) {
-                    Icon(Icons.Rounded.SkipNext, null, tint = Text)
-                }
+                IconButton(onClick = onNext) { Icon(Icons.Rounded.SkipNext, null, tint = Text) }
             }
         }
     }
@@ -886,10 +816,7 @@ private fun NowPlaying(
                 }
                 FilledIconButton(
                     onClick = onToggle,
-                    colors = IconButtonDefaults.filledIconButtonColors(
-                        containerColor = Text,
-                        contentColor = Bg
-                    ),
+                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = Text, contentColor = Bg),
                     modifier = Modifier.size(72.dp)
                 ) {
                     Icon(
@@ -913,7 +840,7 @@ private fun NowPlaying(
                 modifier = Modifier.fillMaxWidth().clickable(onClick = onLyrics)
             ) {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.Lyrics, null, tint = Accent)
+                    Icon(Icons.Rounded.QueueMusic, null, tint = Accent)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text("Lyrics", color = Text, fontWeight = FontWeight.Bold)
@@ -929,7 +856,5 @@ private fun NowPlaying(
 private fun formatTime(ms: Long): String {
     if (ms <= 0L) return "0:00"
     val totalSeconds = ms / 1000
-    val minutes = totalSeconds / 60
-    val seconds = totalSeconds % 60
-    return "%d:%02d".format(minutes, seconds)
+    return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }
