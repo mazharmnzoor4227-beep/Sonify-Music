@@ -32,12 +32,14 @@ object CatalogRegistry {
                         artworkUrl = o.optString("artworkUrl"),
                         streamUrl = o.optString("streamUrl"),
                         source = o.optString("source"),
-                        durationMs = o.optLong("durationMs", 0L)
+                        durationMs = o.optLong("durationMs", 0L),
+                        downloadable = o.optBoolean("downloadable", false)
                     )
                     if (track.id.isNotBlank() && track.title.isNotBlank()) tracks[track.id] = track
                 }
             }
         }
+        OfflineStore.allDownloaded(context).forEach { tracks[it.id] = it }
         seeded = true
     }
 
@@ -86,6 +88,7 @@ object CatalogRegistry {
                     put("streamUrl", track.streamUrl)
                     put("source", track.source)
                     put("durationMs", track.durationMs)
+                    put("downloadable", track.downloadable)
                 })
             }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
