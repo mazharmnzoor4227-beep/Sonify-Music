@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Spring
@@ -295,6 +296,21 @@ private fun SonifyV3Root(controller: MediaController?) {
         isPlaying = false
     }
 
+    BackHandler(
+        enabled = playerExpanded || queueOpen || createPlaylistOpen || addTrackDialog != null || screen !is V3Screen.Home
+    ) {
+        when {
+            queueOpen -> queueOpen = false
+            addTrackDialog != null -> addTrackDialog = null
+            createPlaylistOpen -> createPlaylistOpen = false
+            playerExpanded -> playerExpanded = false
+            screen is V3Screen.PlaylistDetail -> screen = V3Screen.Playlists
+            screen is V3Screen.Playlists || screen is V3Screen.Liked -> screen = V3Screen.Library
+            screen is V3Screen.Category -> screen = V3Screen.Home
+            screen is V3Screen.Search || screen is V3Screen.Library -> screen = V3Screen.Home
+        }
+    }
+
     MaterialTheme(
         colorScheme = darkColorScheme(
             background = V3Bg,
@@ -308,28 +324,36 @@ private fun SonifyV3Root(controller: MediaController?) {
             Scaffold(
                 containerColor = V3Bg,
                 bottomBar = {
-                    NavigationBar(containerColor = Color(0xFF080808)) {
-                        NavigationBarItem(
-                            selected = screen is V3Screen.Home,
-                            onClick = { screen = V3Screen.Home },
-                            icon = { Icon(Icons.Rounded.Home, null) },
-                            label = { Text("Home") },
-                            colors = v3NavColors()
-                        )
-                        NavigationBarItem(
-                            selected = screen is V3Screen.Search,
-                            onClick = { screen = V3Screen.Search },
-                            icon = { Icon(Icons.Rounded.Search, null) },
-                            label = { Text("Search") },
-                            colors = v3NavColors()
-                        )
-                        NavigationBarItem(
-                            selected = screen is V3Screen.Library || screen is V3Screen.Liked || screen is V3Screen.Playlists || screen is V3Screen.PlaylistDetail,
-                            onClick = { screen = V3Screen.Library },
-                            icon = { Icon(Icons.Rounded.LibraryMusic, null) },
-                            label = { Text("Library") },
-                            colors = v3NavColors()
-                        )
+                    Surface(
+                        color = Color(0xFF080808),
+                        shadowElevation = 10.dp
+                    ) {
+                        Column {
+                            HorizontalDivider(color = Color(0xFF202020), thickness = 0.5.dp)
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(62.dp)
+                                    .padding(horizontal = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                V3BottomNavItem(
+                                    selected = screen is V3Screen.Home,
+                                    icon = Icons.Rounded.Home,
+                                    label = "Home"
+                                ) { screen = V3Screen.Home }
+                                V3BottomNavItem(
+                                    selected = screen is V3Screen.Search,
+                                    icon = Icons.Rounded.Search,
+                                    label = "Search"
+                                ) { screen = V3Screen.Search }
+                                V3BottomNavItem(
+                                    selected = screen is V3Screen.Library || screen is V3Screen.Liked || screen is V3Screen.Playlists || screen is V3Screen.PlaylistDetail,
+                                    icon = Icons.Rounded.LibraryMusic,
+                                    label = "Library"
+                                ) { screen = V3Screen.Library }
+                            }
+                        }
                     }
                 }
             ) { padding ->
@@ -470,13 +494,34 @@ private fun SonifyV3Root(controller: MediaController?) {
 }
 
 @Composable
-private fun v3NavColors() = NavigationBarItemDefaults.colors(
-    selectedIconColor = V3Accent,
-    selectedTextColor = V3Text,
-    unselectedIconColor = V3Muted,
-    unselectedTextColor = V3Muted,
-    indicatorColor = Color.Transparent
-)
+private fun RowScope.V3BottomNavItem(
+    selected: Boolean,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    val iconColor = if (selected) V3Accent else V3Muted
+    Column(
+        modifier = Modifier
+            .weight(1f)
+            .fillMaxHeight()
+            .padding(horizontal = 5.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) Color(0x12B7FF45) else Color.Transparent)
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(icon, contentDescription = label, tint = iconColor, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.height(2.dp))
+        Text(
+            label,
+            color = if (selected) V3Text else V3Muted,
+            fontSize = 10.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+        )
+    }
+}
 
 @Composable
 private fun V3MorphingPlayer(
@@ -802,14 +847,24 @@ private fun V3MiniPlayerContent(
 private fun V3HomeScreen(onTrack: (Track) -> Unit, onCategory: (String) -> Unit) {
     LazyColumn(Modifier.fillMaxSize().background(V3Bg), contentPadding = PaddingValues(bottom = 20.dp)) {
         item {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 2.dp)
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("SONIFY", color = V3Text, fontSize = 25.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
-                    Spacer(Modifier.width(8.dp))
-                    Box(Modifier.size(8.dp).background(V3Accent, CircleShape))
+                    Text(
+                        "SONIFY",
+                        color = V3Text,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 0.7.sp
+                    )
+                    Spacer(Modifier.width(7.dp))
+                    Box(Modifier.size(7.dp).background(V3Accent, CircleShape))
                 }
-                Spacer(Modifier.height(6.dp))
-                Text("Good evening", color = V3Muted, fontSize = 15.sp)
+                Spacer(Modifier.height(2.dp))
+                Text("Good evening · Your music, your mood", color = V3Muted, fontSize = 12.sp)
             }
         }
         item { V3SectionTitle("For you", "Fresh picks for your next session") }
@@ -1120,7 +1175,7 @@ private fun V3DetailHeader(title: String, subtitle: String, onBack: () -> Unit) 
 
 @Composable
 private fun V3SectionTitle(title: String, subtitle: String) {
-    Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 26.dp, bottom = 13.dp)) {
+    Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 9.dp)) {
         Text(title, color = V3Text, fontSize = 23.sp, fontWeight = FontWeight.Black)
         Text(subtitle, color = V3Muted, fontSize = 13.sp)
     }
