@@ -42,26 +42,37 @@ object ArtistDirectory {
     )
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(7, TimeUnit.SECONDS)
+        .callTimeout(9, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
 
-    private val portraitCache = ConcurrentHashMap<String, String?>()
+    // ConcurrentHashMap does not allow null values. The old nullable map could crash the
+    // whole app when Wikipedia had no portrait for one artist. Only successful URLs are cached.
+    private val portraitCache = ConcurrentHashMap<String, String>()
 
     fun get(id: String): ArtistProfile? = popular.firstOrNull { it.id == id }
 
     fun matching(query: String): List<ArtistProfile> {
         val q = query.trim()
         if (q.isBlank()) return popular
-        return popular.filter { it.name.contains(q, ignoreCase = true) || it.region.contains(q, ignoreCase = true) }
+        return popular.filter {
+            it.name.contains(q, ignoreCase = true) || it.region.contains(q, ignoreCase = true)
+        }
     }
 
     suspend fun portrait(profile: ArtistProfile): String? = withContext(Dispatchers.IO) {
-        if (portraitCache.containsKey(profile.id)) return@withContext portraitCache[profile.id]
-        val image = summaryPortrait(profile.wikipediaTitle) ?: mediaWikiPortrait(profile.wikipediaTitle)
-        portraitCache[profile.id] = image
+        portraitCache[profile.id]?.let { return@withContext it }
+
+        val image = runCatching {
+            summaryPortrait(profile.wikipediaTitle)
+                ?: mediaWikiPortrait(profile.wikipediaTitle)
+                ?: commonsPortrait(profile.name)
+        }.getOrNull()
+
+        if (!image.isNullOrBlank()) portraitCache[profile.id] = image
         image
     }
 
@@ -70,7 +81,7 @@ object ArtistDirectory {
         val request = Request.Builder()
             .url("https://en.wikipedia.org/api/rest_v1/page/summary/$encoded")
             .header("Accept", "application/json")
-            .header("User-Agent", "SonifyMusic/1.0 (Android music discovery app)")
+            .header("User-Agent", "SonifyMusic/1.1 (Android music discovery app)")
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return@use null
@@ -93,7 +104,7 @@ object ArtistDirectory {
         val request = Request.Builder()
             .url(url)
             .header("Accept", "application/json")
-            .header("User-Agent", "SonifyMusic/1.0 (Android music discovery app)")
+            .header("User-Agent", "SonifyMusic/1.1 (Android music discovery app)")
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return@use null
@@ -106,6 +117,40 @@ object ArtistDirectory {
                 if (original.isNotBlank()) return@use original
                 val thumb = page.optJSONObject("thumbnail")?.optString("source").orEmpty()
                 if (thumb.isNotBlank()) return@use thumb
+            }
+            null
+        }
+    }.getOrNull()
+
+    private fun commonsPortrait(name: String): String? = runCatching {
+        val url = "https://commons.wikimedia.org/w/api.php".toHttpUrl().newBuilder()
+            .addQueryParameter("action", "query")
+            .addQueryParameter("format", "json")
+            .addQueryParameter("generator", "search")
+            .addQueryParameter("gsrsearch", name)
+            .addQueryParameter("gsrnamespace", "6")
+            .addQueryParameter("gsrlimit", "5")
+            .addQueryParameter("prop", "imageinfo")
+            .addQueryParameter("iiprop", "url")
+            .addQueryParameter("iiurlwidth", "900")
+            .build()
+        val request = Request.Builder()
+            .url(url)
+            .header("Accept", "application/json")
+            .header("User-Agent", "SonifyMusic/1.1 (Android music discovery app)")
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return@use null
+            val root = JSONObject(response.body?.string().orEmpty())
+            val pages = root.optJSONObject("query")?.optJSONObject("pages") ?: return@use null
+            val keys = pages.keys()
+            while (keys.hasNext()) {
+                val page = pages.optJSONObject(keys.next()) ?: continue
+                val info = page.optJSONArray("imageinfo")?.optJSONObject(0) ?: continue
+                val thumb = info.optString("thumburl")
+                if (thumb.startsWith("https://")) return@use thumb
+                val full = info.optString("url")
+                if (full.startsWith("https://")) return@use full
             }
             null
         }
