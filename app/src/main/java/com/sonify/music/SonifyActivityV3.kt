@@ -55,6 +55,8 @@ import androidx.media3.session.SessionToken
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.google.common.util.concurrent.ListenableFuture
+import com.sonify.music.data.AudiusCatalog
+import com.sonify.music.data.CatalogRegistry
 import com.sonify.music.data.DemoCatalog
 import com.sonify.music.model.Track
 import com.sonify.music.playback.PlaybackService
@@ -84,6 +86,7 @@ private data class V3Category(
     val title: String,
     val subtitle: String,
     val artworkUrl: String,
+    val query: String,
     val trackIds: List<String>
 )
 
@@ -94,10 +97,18 @@ private data class V3Playlist(
 )
 
 private val v3Categories = listOf(
-    V3Category("sad", "Sad Songs", "Hindi, Pakistani and heartbreak moods", "https://picsum.photos/seed/sonify-sad-v3/600", listOf("5","3","10","9","1")),
-    V3Category("chill", "Chill", "Easy listening for a quiet mood", "https://picsum.photos/seed/sonify-chill-v3/600", listOf("2","5","1","7","10")),
-    V3Category("workout", "Workout", "High-energy picks", "https://picsum.photos/seed/sonify-workout-v3/600", listOf("6","7","8","4","2")),
-    V3Category("night", "Late Night", "Dark, slow and cinematic", "https://picsum.photos/seed/sonify-night-v3/600", listOf("1","3","9","10","5"))
+    V3Category("bollywood", "Bollywood & Hindi", "Hindi and Bollywood discovery", "https://picsum.photos/seed/sonify-bollywood/600", "bollywood hindi", listOf("1","3","5","7","9")),
+    V3Category("pakistani", "Pakistani", "Urdu and Pakistani discovery", "https://picsum.photos/seed/sonify-pakistani/600", "pakistani urdu", listOf("2","4","6","8","10")),
+    V3Category("punjabi", "Punjabi", "Punjabi music discovery", "https://picsum.photos/seed/sonify-punjabi/600", "punjabi", listOf("4","7","2","8","6")),
+    V3Category("sad", "Sad Songs", "Heartbreak and emotional moods", "https://picsum.photos/seed/sonify-sad-v4/600", "sad heartbreak", listOf("5","3","10","9","1")),
+    V3Category("romantic", "Romantic", "Love songs and soft moods", "https://picsum.photos/seed/sonify-romantic/600", "romantic love", listOf("1","2","5","9","10")),
+    V3Category("chill", "Chill", "Easy listening for a quiet mood", "https://picsum.photos/seed/sonify-chill-v4/600", "chill", listOf("2","5","1","7","10")),
+    V3Category("workout", "Workout", "High-energy picks", "https://picsum.photos/seed/sonify-workout-v4/600", "workout energy", listOf("6","7","8","4","2")),
+    V3Category("hiphop", "Hip-Hop", "Rap and hip-hop discovery", "https://picsum.photos/seed/sonify-hiphop/600", "hip hop rap", listOf("8","6","4","7","2")),
+    V3Category("electronic", "Electronic", "Electronic and dance", "https://picsum.photos/seed/sonify-electronic/600", "electronic dance", listOf("6","2","7","4","8")),
+    V3Category("rnb", "R&B", "R&B and soul", "https://picsum.photos/seed/sonify-rnb/600", "r&b soul", listOf("3","5","9","1","10")),
+    V3Category("rock", "Rock", "Rock and alternative", "https://picsum.photos/seed/sonify-rock/600", "rock alternative", listOf("7","8","4","6","2")),
+    V3Category("cinematic", "Cinematic", "Soundtrack-style and cinematic music", "https://picsum.photos/seed/sonify-cinematic/600", "cinematic soundtrack", listOf("1","3","9","10","5"))
 )
 
 class SonifyActivityV3 : ComponentActivity() {
@@ -149,6 +160,7 @@ private fun Track.toV3MediaItem(): MediaItem = MediaItem.Builder()
 @Composable
 private fun SonifyV3Root(controller: MediaController?) {
     val context = LocalContext.current
+    LaunchedEffect(Unit) { CatalogRegistry.seed(context) }
     var screen by remember { mutableStateOf<V3Screen>(V3Screen.Home) }
     var current by remember { mutableStateOf<Track?>(null) }
     var playerExpanded by remember { mutableStateOf(false) }
@@ -204,7 +216,7 @@ private fun SonifyV3Root(controller: MediaController?) {
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 mediaItem?.mediaId?.let { id ->
-                    DemoCatalog.allTracks.firstOrNull { it.id == id }?.let { current = it }
+                    CatalogRegistry.get(id)?.let { current = it }
                 }
             }
         }
@@ -224,7 +236,7 @@ private fun SonifyV3Root(controller: MediaController?) {
                 shuffle = player.shuffleModeEnabled
                 repeatMode = player.repeatMode
                 player.currentMediaItem?.mediaId?.let { id ->
-                    DemoCatalog.allTracks.firstOrNull { it.id == id }?.let { current = it }
+                    CatalogRegistry.get(id)?.let { current = it }
                 }
             }
             delay(300)
@@ -237,7 +249,8 @@ private fun SonifyV3Root(controller: MediaController?) {
             Toast.makeText(context, "Player is getting ready…", Toast.LENGTH_SHORT).show()
             return
         }
-        val queue = DemoCatalog.allTracks
+        CatalogRegistry.remember(context, track)
+        val queue = CatalogRegistry.allTracks()
         val start = queue.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
         player.setMediaItems(queue.map { it.toV3MediaItem() }, start, 0L)
         player.prepare()
@@ -250,7 +263,7 @@ private fun SonifyV3Root(controller: MediaController?) {
         val player = controller ?: return
         val track = current ?: return
         if (player.currentMediaItem == null) {
-            val queue = DemoCatalog.allTracks
+            val queue = CatalogRegistry.allTracks()
             val start = queue.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
             player.setMediaItems(queue.map { it.toV3MediaItem() }, start, 0L)
             player.prepare()
@@ -845,6 +858,24 @@ private fun V3MiniPlayerContent(
 
 @Composable
 private fun V3HomeScreen(onTrack: (Track) -> Unit, onCategory: (String) -> Unit) {
+    val context = LocalContext.current
+    var liveTracks by remember { mutableStateOf<List<Track>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var liveAvailable by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        val result = AudiusCatalog.trending(32)
+        val onlineTracks = result.getOrDefault(emptyList())
+        if (onlineTracks.isNotEmpty()) {
+            liveTracks = CatalogRegistry.remember(context, onlineTracks)
+            liveAvailable = true
+        }
+        loading = false
+    }
+
+    val featuredTracks = liveTracks.take(9).ifEmpty { DemoCatalog.featured }
+    val trendingTracks = liveTracks.drop(9).take(18).ifEmpty { DemoCatalog.trending }
+
     LazyColumn(Modifier.fillMaxSize().background(V3Bg), contentPadding = PaddingValues(bottom = 20.dp)) {
         item {
             Column(
@@ -853,34 +884,39 @@ private fun V3HomeScreen(onTrack: (Track) -> Unit, onCategory: (String) -> Unit)
                     .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 2.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "SONIFY",
-                        color = V3Text,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 0.7.sp
-                    )
+                    Text("SONIFY", color = V3Text, fontSize = 22.sp, fontWeight = FontWeight.Black, letterSpacing = 0.7.sp)
                     Spacer(Modifier.width(7.dp))
                     Box(Modifier.size(7.dp).background(V3Accent, CircleShape))
                 }
                 Spacer(Modifier.height(2.dp))
-                Text("Good evening · Your music, your mood", color = V3Muted, fontSize = 12.sp)
+                Text(
+                    if (liveAvailable) "Live music discovery · Streaming from Audius" else "Your music, your mood",
+                    color = V3Muted,
+                    fontSize = 12.sp
+                )
             }
         }
-        item { V3SectionTitle("For you", "Fresh picks for your next session") }
+        item { V3SectionTitle("For you", if (liveAvailable) "Fresh live picks" else "Fresh picks for your next session") }
         item {
             LazyRow(contentPadding = PaddingValues(horizontal = 20.dp)) {
-                items(DemoCatalog.featured, key = { it.id }) { V3AlbumCard(it, onTrack) }
+                items(featuredTracks, key = { it.id }) { V3AlbumCard(it, onTrack) }
             }
         }
-        item { V3SectionTitle("Browse moods", "Pick a category") }
+        item { V3SectionTitle("Browse music", "Genres, moods and regional discovery") }
         item {
             LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 items(v3Categories, key = { it.id }) { c -> V3CategoryCard(c) { onCategory(c.id) } }
             }
         }
-        item { V3SectionTitle("Trending now", "Popular in Sonify Preview") }
-        items(DemoCatalog.trending, key = { it.id }) { V3CompactTrackRow(it, onTrack) }
+        item { V3SectionTitle("Trending now", if (liveAvailable) "Live open music catalog" else "Sonify Preview") }
+        if (loading && liveTracks.isEmpty()) {
+            item {
+                Row(Modifier.fillMaxWidth().padding(28.dp), horizontalArrangement = Arrangement.Center) {
+                    CircularProgressIndicator(color = V3Accent, modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
+                }
+            }
+        }
+        items(trendingTracks, key = { it.id }) { V3CompactTrackRow(it, onTrack) }
     }
 }
 
@@ -904,7 +940,23 @@ private fun V3CategoryScreen(
     onAddToPlaylist: (Track) -> Unit,
     onPlayNext: (Track) -> Unit
 ) {
-    val tracks = category.trackIds.mapNotNull { id -> DemoCatalog.allTracks.firstOrNull { it.id == id } }
+    val context = LocalContext.current
+    var tracks by remember(category.id) { mutableStateOf<List<Track>>(emptyList()) }
+    var loading by remember(category.id) { mutableStateOf(true) }
+    var liveAvailable by remember(category.id) { mutableStateOf(false) }
+
+    LaunchedEffect(category.id) {
+        val result = AudiusCatalog.search(category.query, 45)
+        val onlineTracks = result.getOrDefault(emptyList())
+        if (onlineTracks.isNotEmpty()) {
+            tracks = CatalogRegistry.remember(context, onlineTracks)
+            liveAvailable = true
+        } else {
+            tracks = category.trackIds.mapNotNull { id -> CatalogRegistry.get(id) }
+        }
+        loading = false
+    }
+
     LazyColumn(Modifier.fillMaxSize().background(V3Bg), contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
             Box(
@@ -920,20 +972,32 @@ private fun V3CategoryScreen(
                     Spacer(Modifier.height(18.dp))
                     Text(category.title, color = V3Text, fontWeight = FontWeight.Black, fontSize = 30.sp)
                     Text(category.subtitle, color = V3Muted, fontSize = 14.sp)
-                    Spacer(Modifier.height(14.dp))
+                    Spacer(Modifier.height(6.dp))
+                    Text(if (liveAvailable) "Live results from Audius" else "Sonify catalog", color = V3Accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(10.dp))
                 }
             }
         }
-        item { V3SectionTitle("Songs", "Tap a track to open the player") }
-        items(tracks, key = { it.id }) { track ->
-            V3FunctionalTrackRow(
-                track,
-                liked.contains(track.id),
-                onTrack,
-                { onToggleLike(track.id) },
-                { onAddToPlaylist(track) },
-                { onPlayNext(track) }
-            )
+        item { V3SectionTitle("Songs", "Tap a track to play") }
+        if (loading) {
+            item {
+                Row(Modifier.fillMaxWidth().padding(30.dp), horizontalArrangement = Arrangement.Center) {
+                    CircularProgressIndicator(color = V3Accent, modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
+                }
+            }
+        } else if (tracks.isEmpty()) {
+            item { V3EmptyState("No tracks found", "Try Search for a different artist, song or genre.") }
+        } else {
+            items(tracks, key = { it.id }) { track ->
+                V3FunctionalTrackRow(
+                    track,
+                    liked.contains(track.id),
+                    onTrack,
+                    { onToggleLike(track.id) },
+                    { onAddToPlaylist(track) },
+                    { onPlayNext(track) }
+                )
+            }
         }
     }
 }
@@ -947,8 +1011,33 @@ private fun V3SearchScreen(
     onAddToPlaylist: (Track) -> Unit,
     onPlayNext: (Track) -> Unit
 ) {
+    val context = LocalContext.current
     var query by remember { mutableStateOf("") }
-    val results = remember(query) { DemoCatalog.search(query) }
+    var results by remember { mutableStateOf<List<Track>>(emptyList()) }
+    var loading by remember { mutableStateOf(false) }
+    var online by remember { mutableStateOf(false) }
+
+    LaunchedEffect(query) {
+        val clean = query.trim()
+        if (clean.isBlank()) {
+            results = emptyList()
+            loading = false
+            online = false
+            return@LaunchedEffect
+        }
+        loading = true
+        delay(350)
+        val response = AudiusCatalog.search(clean, 45)
+        val liveTracks = response.getOrDefault(emptyList())
+        if (liveTracks.isNotEmpty()) {
+            results = CatalogRegistry.remember(context, liveTracks)
+            online = true
+        } else {
+            results = DemoCatalog.search(clean)
+            online = false
+        }
+        loading = false
+    }
 
     LazyColumn(Modifier.fillMaxSize().background(V3Bg), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp)) {
         item {
@@ -959,7 +1048,7 @@ private fun V3SearchScreen(
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                placeholder = { Text("Songs, artists, playlists, moods…", color = V3Muted) },
+                placeholder = { Text("Songs, artists, genres, moods…", color = V3Muted) },
                 leadingIcon = { Icon(Icons.Rounded.Search, null, tint = V3Muted) },
                 trailingIcon = {
                     if (query.isNotBlank()) {
@@ -977,7 +1066,11 @@ private fun V3SearchScreen(
                     cursorColor = V3Accent
                 )
             )
-            Spacer(Modifier.height(22.dp))
+            Spacer(Modifier.height(18.dp))
+            if (query.isNotBlank()) {
+                Text(if (online) "Live results · Audius" else "Search results", color = V3Muted, fontSize = 12.sp)
+                Spacer(Modifier.height(8.dp))
+            }
         }
 
         if (query.isBlank()) {
@@ -1007,8 +1100,14 @@ private fun V3SearchScreen(
                 }
                 Spacer(Modifier.height(12.dp))
             }
+        } else if (loading) {
+            item {
+                Row(Modifier.fillMaxWidth().padding(36.dp), horizontalArrangement = Arrangement.Center) {
+                    CircularProgressIndicator(color = V3Accent, modifier = Modifier.size(30.dp), strokeWidth = 3.dp)
+                }
+            }
         } else if (results.isEmpty()) {
-            item { V3EmptyState("No preview tracks found", "Live catalog search will replace the preview catalog.") }
+            item { V3EmptyState("No tracks found", "Try another song, artist, language or genre.") }
         } else {
             items(results, key = { it.id }) { track ->
                 V3FunctionalTrackRow(
@@ -1072,7 +1171,7 @@ private fun V3LikedScreen(
     onAddToPlaylist: (Track) -> Unit,
     onPlayNext: (Track) -> Unit
 ) {
-    val tracks = DemoCatalog.allTracks.filter { it.id in liked }
+    val tracks = CatalogRegistry.allTracks().filter { it.id in liked }
     LazyColumn(Modifier.fillMaxSize().background(V3Bg), contentPadding = PaddingValues(bottom = 24.dp)) {
         item { V3DetailHeader("Liked Songs", "${tracks.size} tracks", onBack) }
         if (tracks.isEmpty()) {
@@ -1138,7 +1237,7 @@ private fun V3PlaylistDetailScreen(
     onAddSongs: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val tracks = playlist.trackIds.mapNotNull { id -> DemoCatalog.allTracks.firstOrNull { it.id == id } }
+    val tracks = playlist.trackIds.mapNotNull { id -> CatalogRegistry.get(id) }
     LazyColumn(Modifier.fillMaxSize().background(V3Bg), contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
             V3DetailHeader(playlist.name, "${tracks.size} tracks", onBack)
@@ -1251,10 +1350,10 @@ private fun V3QueueSheet(
     onTrack: (Track) -> Unit
 ) {
     val ids = remember(controller, current) {
-        if (controller == null || controller.mediaItemCount == 0) DemoCatalog.allTracks.map { it.id }
+        if (controller == null || controller.mediaItemCount == 0) CatalogRegistry.allTracks().map { it.id }
         else (0 until controller.mediaItemCount).map { controller.getMediaItemAt(it).mediaId }
     }
-    val tracks = ids.mapNotNull { id -> DemoCatalog.allTracks.firstOrNull { it.id == id } }
+    val tracks = ids.mapNotNull { id -> CatalogRegistry.get(id) }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
