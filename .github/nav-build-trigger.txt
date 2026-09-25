@@ -1,1 +1,1 @@
-Build Sonify after Android back navigation and UI polish fix.
+Build Sonify after artist pages, Spotify-inspired home, search and offline download upgrade.
