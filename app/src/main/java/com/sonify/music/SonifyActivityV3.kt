@@ -56,13 +56,17 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.google.common.util.concurrent.ListenableFuture
 import com.sonify.music.data.AudiusCatalog
+import com.sonify.music.data.ArtistDirectory
+import com.sonify.music.data.ArtistProfile
 import com.sonify.music.data.CatalogRegistry
+import com.sonify.music.data.OfflineStore
 import com.sonify.music.data.DemoCatalog
 import com.sonify.music.model.Track
 import com.sonify.music.playback.PlaybackService
 import java.util.concurrent.Executor
 import kotlin.math.max
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private val V3Bg = Color(0xFF050505)
 private val V3Surface = Color(0xFF151515)
@@ -79,6 +83,8 @@ private sealed interface V3Screen {
     data object Liked : V3Screen
     data object Playlists : V3Screen
     data class PlaylistDetail(val id: String) : V3Screen
+    data class Artist(val id: String) : V3Screen
+    data object Downloads : V3Screen
 }
 
 private data class V3Category(
@@ -97,18 +103,18 @@ private data class V3Playlist(
 )
 
 private val v3Categories = listOf(
-    V3Category("bollywood", "Bollywood & Hindi", "Hindi and Bollywood discovery", "https://picsum.photos/seed/sonify-bollywood/600", "bollywood hindi", listOf("1","3","5","7","9")),
-    V3Category("pakistani", "Pakistani", "Urdu and Pakistani discovery", "https://picsum.photos/seed/sonify-pakistani/600", "pakistani urdu", listOf("2","4","6","8","10")),
-    V3Category("punjabi", "Punjabi", "Punjabi music discovery", "https://picsum.photos/seed/sonify-punjabi/600", "punjabi", listOf("4","7","2","8","6")),
-    V3Category("sad", "Sad Songs", "Heartbreak and emotional moods", "https://picsum.photos/seed/sonify-sad-v4/600", "sad heartbreak", listOf("5","3","10","9","1")),
-    V3Category("romantic", "Romantic", "Love songs and soft moods", "https://picsum.photos/seed/sonify-romantic/600", "romantic love", listOf("1","2","5","9","10")),
-    V3Category("chill", "Chill", "Easy listening for a quiet mood", "https://picsum.photos/seed/sonify-chill-v4/600", "chill", listOf("2","5","1","7","10")),
-    V3Category("workout", "Workout", "High-energy picks", "https://picsum.photos/seed/sonify-workout-v4/600", "workout energy", listOf("6","7","8","4","2")),
-    V3Category("hiphop", "Hip-Hop", "Rap and hip-hop discovery", "https://picsum.photos/seed/sonify-hiphop/600", "hip hop rap", listOf("8","6","4","7","2")),
-    V3Category("electronic", "Electronic", "Electronic and dance", "https://picsum.photos/seed/sonify-electronic/600", "electronic dance", listOf("6","2","7","4","8")),
-    V3Category("rnb", "R&B", "R&B and soul", "https://picsum.photos/seed/sonify-rnb/600", "r&b soul", listOf("3","5","9","1","10")),
-    V3Category("rock", "Rock", "Rock and alternative", "https://picsum.photos/seed/sonify-rock/600", "rock alternative", listOf("7","8","4","6","2")),
-    V3Category("cinematic", "Cinematic", "Soundtrack-style and cinematic music", "https://picsum.photos/seed/sonify-cinematic/600", "cinematic soundtrack", listOf("1","3","9","10","5"))
+    V3Category("bollywood", "Bollywood & Hindi", "Hindi and Bollywood discovery", "", "bollywood hindi", listOf("1","3","5","7","9")),
+    V3Category("pakistani", "Pakistani", "Urdu and Pakistani discovery", "", "pakistani urdu", listOf("2","4","6","8","10")),
+    V3Category("punjabi", "Punjabi", "Punjabi music discovery", "", "punjabi", listOf("4","7","2","8","6")),
+    V3Category("sad", "Sad Songs", "Heartbreak and emotional moods", "", "sad heartbreak", listOf("5","3","10","9","1")),
+    V3Category("romantic", "Romantic", "Love songs and soft moods", "", "romantic love", listOf("1","2","5","9","10")),
+    V3Category("chill", "Chill", "Easy listening for a quiet mood", "", "chill", listOf("2","5","1","7","10")),
+    V3Category("workout", "Workout", "High-energy picks", "", "workout energy", listOf("6","7","8","4","2")),
+    V3Category("hiphop", "Hip-Hop", "Rap and hip-hop discovery", "", "hip hop rap", listOf("8","6","4","7","2")),
+    V3Category("electronic", "Electronic", "Electronic and dance", "", "electronic dance", listOf("6","2","7","4","8")),
+    V3Category("rnb", "R&B", "R&B and soul", "", "r&b soul", listOf("3","5","9","1","10")),
+    V3Category("rock", "Rock", "Rock and alternative", "", "rock alternative", listOf("7","8","4","6","2")),
+    V3Category("cinematic", "Cinematic", "Soundtrack-style and cinematic music", "", "cinematic soundtrack", listOf("1","3","9","10","5"))
 )
 
 class SonifyActivityV3 : ComponentActivity() {
@@ -249,13 +255,14 @@ private fun SonifyV3Root(controller: MediaController?) {
             Toast.makeText(context, "Player is getting ready…", Toast.LENGTH_SHORT).show()
             return
         }
-        CatalogRegistry.remember(context, track)
-        val queue = CatalogRegistry.allTracks()
-        val start = queue.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
+        val playable = OfflineStore.resolve(context, track)
+        CatalogRegistry.remember(context, playable)
+        val queue = CatalogRegistry.allTracks().map { OfflineStore.resolve(context, it) }
+        val start = queue.indexOfFirst { it.id == playable.id }.coerceAtLeast(0)
         player.setMediaItems(queue.map { it.toV3MediaItem() }, start, 0L)
         player.prepare()
         player.play()
-        current = track
+        current = playable
         playerExpanded = true
     }
 
@@ -318,8 +325,8 @@ private fun SonifyV3Root(controller: MediaController?) {
             createPlaylistOpen -> createPlaylistOpen = false
             playerExpanded -> playerExpanded = false
             screen is V3Screen.PlaylistDetail -> screen = V3Screen.Playlists
-            screen is V3Screen.Playlists || screen is V3Screen.Liked -> screen = V3Screen.Library
-            screen is V3Screen.Category -> screen = V3Screen.Home
+            screen is V3Screen.Playlists || screen is V3Screen.Liked || screen is V3Screen.Downloads -> screen = V3Screen.Library
+            screen is V3Screen.Category || screen is V3Screen.Artist -> screen = V3Screen.Home
             screen is V3Screen.Search || screen is V3Screen.Library -> screen = V3Screen.Home
         }
     }
@@ -361,7 +368,7 @@ private fun SonifyV3Root(controller: MediaController?) {
                                     label = "Search"
                                 ) { screen = V3Screen.Search }
                                 V3BottomNavItem(
-                                    selected = screen is V3Screen.Library || screen is V3Screen.Liked || screen is V3Screen.Playlists || screen is V3Screen.PlaylistDetail,
+                                    selected = screen is V3Screen.Library || screen is V3Screen.Liked || screen is V3Screen.Playlists || screen is V3Screen.PlaylistDetail || screen is V3Screen.Downloads,
                                     icon = Icons.Rounded.LibraryMusic,
                                     label = "Library"
                                 ) { screen = V3Screen.Library }
@@ -377,20 +384,26 @@ private fun SonifyV3Root(controller: MediaController?) {
                         label = "v3-screen"
                     ) { target ->
                         when (target) {
-                            V3Screen.Home -> V3HomeScreen(::playTrack) { screen = V3Screen.Category(it) }
+                            V3Screen.Home -> V3HomeScreen(
+                                onTrack = ::playTrack,
+                                onCategory = { screen = V3Screen.Category(it) },
+                                onArtist = { screen = V3Screen.Artist(it) }
+                            )
                             V3Screen.Search -> V3SearchScreen(
                                 liked = liked,
                                 onTrack = ::playTrack,
                                 onCategory = { screen = V3Screen.Category(it) },
                                 onToggleLike = ::toggleLike,
                                 onAddToPlaylist = { addTrackDialog = it },
-                                onPlayNext = ::playNext
+                                onPlayNext = ::playNext,
+                                onArtist = { screen = V3Screen.Artist(it) }
                             )
                             V3Screen.Library -> V3LibraryScreen(
                                 liked.size,
                                 playlists.size,
                                 onLiked = { screen = V3Screen.Liked },
-                                onPlaylists = { screen = V3Screen.Playlists }
+                                onPlaylists = { screen = V3Screen.Playlists },
+                                onDownloads = { screen = V3Screen.Downloads }
                             )
                             is V3Screen.Category -> {
                                 v3Categories.firstOrNull { it.id == target.id }?.let { category ->
@@ -430,6 +443,23 @@ private fun SonifyV3Root(controller: MediaController?) {
                                     )
                                 }
                             }
+                            is V3Screen.Artist -> {
+                                ArtistDirectory.get(target.id)?.let { artist ->
+                                    V3ArtistScreen(
+                                        artist = artist,
+                                        liked = liked,
+                                        onBack = { screen = V3Screen.Home },
+                                        onTrack = ::playTrack,
+                                        onToggleLike = ::toggleLike,
+                                        onAddToPlaylist = { addTrackDialog = it },
+                                        onPlayNext = ::playNext
+                                    )
+                                }
+                            }
+                            V3Screen.Downloads -> V3DownloadsScreen(
+                                onBack = { screen = V3Screen.Library },
+                                onTrack = ::playTrack
+                            )
                         }
                     }
                 }
@@ -513,14 +543,12 @@ private fun RowScope.V3BottomNavItem(
     label: String,
     onClick: () -> Unit
 ) {
-    val iconColor = if (selected) V3Accent else V3Muted
+    val iconColor = if (selected) V3Text else V3Muted
     Column(
         modifier = Modifier
             .weight(1f)
             .fillMaxHeight()
             .padding(horizontal = 5.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (selected) Color(0x12B7FF45) else Color.Transparent)
             .clickable(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -530,7 +558,7 @@ private fun RowScope.V3BottomNavItem(
         Text(
             label,
             color = if (selected) V3Text else V3Muted,
-            fontSize = 10.sp,
+            fontSize = 11.sp,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
         )
     }
@@ -857,15 +885,18 @@ private fun V3MiniPlayerContent(
 }
 
 @Composable
-private fun V3HomeScreen(onTrack: (Track) -> Unit, onCategory: (String) -> Unit) {
+private fun V3HomeScreen(
+    onTrack: (Track) -> Unit,
+    onCategory: (String) -> Unit,
+    onArtist: (String) -> Unit
+) {
     val context = LocalContext.current
     var liveTracks by remember { mutableStateOf<List<Track>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var liveAvailable by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        val result = AudiusCatalog.trending(32)
-        val onlineTracks = result.getOrDefault(emptyList())
+        val onlineTracks = AudiusCatalog.trending(40).getOrDefault(emptyList())
         if (onlineTracks.isNotEmpty()) {
             liveTracks = CatalogRegistry.remember(context, onlineTracks)
             liveAvailable = true
@@ -873,42 +904,53 @@ private fun V3HomeScreen(onTrack: (Track) -> Unit, onCategory: (String) -> Unit)
         loading = false
     }
 
-    val featuredTracks = liveTracks.take(9).ifEmpty { DemoCatalog.featured }
-    val trendingTracks = liveTracks.drop(9).take(18).ifEmpty { DemoCatalog.trending }
+    val featuredTracks = liveTracks.take(10).ifEmpty { DemoCatalog.featured }
+    val trendingTracks = liveTracks.drop(10).take(20).ifEmpty { DemoCatalog.trending }
 
-    LazyColumn(Modifier.fillMaxSize().background(V3Bg), contentPadding = PaddingValues(bottom = 20.dp)) {
+    LazyColumn(
+        Modifier.fillMaxSize().background(V3Bg),
+        contentPadding = PaddingValues(bottom = 24.dp)
+    ) {
         item {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 2.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("SONIFY", color = V3Text, fontSize = 22.sp, fontWeight = FontWeight.Black, letterSpacing = 0.7.sp)
-                    Spacer(Modifier.width(7.dp))
-                    Box(Modifier.size(7.dp).background(V3Accent, CircleShape))
+            Column(Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 8.dp, bottom = 8.dp)) {
+                Text("Good evening", color = V3Text, fontSize = 28.sp, fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(10.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item { V3HomeChip("Music") { } }
+                    item { V3HomeChip("Hindi") { onCategory("bollywood") } }
+                    item { V3HomeChip("Pakistani") { onCategory("pakistani") } }
+                    item { V3HomeChip("Punjabi") { onCategory("punjabi") } }
                 }
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    if (liveAvailable) "Live music discovery · Streaming from Audius" else "Your music, your mood",
-                    color = V3Muted,
-                    fontSize = 12.sp
-                )
             }
         }
-        item { V3SectionTitle("For you", if (liveAvailable) "Fresh live picks" else "Fresh picks for your next session") }
+
+        item { V3SectionTitle("Popular artists", "Tap an artist to open their page") }
         item {
-            LazyRow(contentPadding = PaddingValues(horizontal = 20.dp)) {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 18.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                items(ArtistDirectory.popular, key = { it.id }) { artist ->
+                    V3ArtistCard(artist) { onArtist(artist.id) }
+                }
+            }
+        }
+
+        item { V3SectionTitle("Made for you", if (liveAvailable) "Fresh playable music" else "Fresh picks") }
+        item {
+            LazyRow(contentPadding = PaddingValues(horizontal = 18.dp)) {
                 items(featuredTracks, key = { it.id }) { V3AlbumCard(it, onTrack) }
             }
         }
-        item { V3SectionTitle("Browse music", "Genres, moods and regional discovery") }
+
+        item { V3SectionTitle("Browse all", "Hindi, Pakistani, Punjabi, moods and genres") }
         item {
-            LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            LazyRow(contentPadding = PaddingValues(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(v3Categories, key = { it.id }) { c -> V3CategoryCard(c) { onCategory(c.id) } }
             }
         }
-        item { V3SectionTitle("Trending now", if (liveAvailable) "Live open music catalog" else "Sonify Preview") }
+
+        item { V3SectionTitle("Popular right now", if (liveAvailable) "Live open catalog" else "Sonify picks") }
         if (loading && liveTracks.isEmpty()) {
             item {
                 Row(Modifier.fillMaxWidth().padding(28.dp), horizontalArrangement = Arrangement.Center) {
@@ -921,12 +963,142 @@ private fun V3HomeScreen(onTrack: (Track) -> Unit, onCategory: (String) -> Unit)
 }
 
 @Composable
-private fun V3CategoryCard(category: V3Category, onClick: () -> Unit) {
-    Column(Modifier.width(154.dp).clickable(onClick = onClick)) {
-        V3ArtworkUrl(category.artworkUrl, Modifier.size(154.dp).clip(RoundedCornerShape(22.dp)))
+private fun V3HomeChip(text: String, onClick: () -> Unit) {
+    Surface(
+        color = V3Surface2,
+        shape = RoundedCornerShape(22.dp),
+        modifier = Modifier.clickable(onClick = onClick)
+    ) {
+        Text(text, color = V3Text, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp))
+    }
+}
+
+@Composable
+private fun V3ArtistCard(artist: ArtistProfile, onClick: () -> Unit) {
+    var image by remember(artist.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(artist.id) { image = ArtistDirectory.portrait(artist) }
+    Column(Modifier.width(126.dp).clickable(onClick = onClick), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (image.isNullOrBlank()) {
+            Box(Modifier.size(126.dp).clip(CircleShape).background(V3Surface2), contentAlignment = Alignment.Center) {
+                Icon(Icons.Rounded.Person, null, tint = V3Muted, modifier = Modifier.size(54.dp))
+            }
+        } else {
+            V3ArtworkUrl(image.orEmpty(), Modifier.size(126.dp).clip(CircleShape))
+        }
         Spacer(Modifier.height(9.dp))
-        Text(category.title, color = V3Text, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 1)
-        Text(category.subtitle, color = V3Muted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(artist.name, color = V3Text, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("Artist", color = V3Muted, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun V3ArtistScreen(
+    artist: ArtistProfile,
+    liked: List<String>,
+    onBack: () -> Unit,
+    onTrack: (Track) -> Unit,
+    onToggleLike: (String) -> Unit,
+    onAddToPlaylist: (Track) -> Unit,
+    onPlayNext: (Track) -> Unit
+) {
+    val context = LocalContext.current
+    var image by remember(artist.id) { mutableStateOf<String?>(null) }
+    var tracks by remember(artist.id) { mutableStateOf<List<Track>>(emptyList()) }
+    var loading by remember(artist.id) { mutableStateOf(true) }
+
+    LaunchedEffect(artist.id) {
+        image = ArtistDirectory.portrait(artist)
+        val online = AudiusCatalog.search(artist.musicQuery, 50).getOrDefault(emptyList())
+        tracks = if (online.isNotEmpty()) CatalogRegistry.remember(context, online) else emptyList()
+        loading = false
+    }
+
+    LazyColumn(Modifier.fillMaxSize().background(V3Bg), contentPadding = PaddingValues(bottom = 28.dp)) {
+        item {
+            Box(
+                Modifier.fillMaxWidth().height(330.dp)
+                    .background(Brush.verticalGradient(listOf(Color(0xFF283318), V3Bg)))
+            ) {
+                if (!image.isNullOrBlank()) {
+                    V3ArtworkUrl(image.orEmpty(), Modifier.fillMaxSize())
+                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xDD050505), V3Bg))))
+                }
+                IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart).padding(10.dp).background(Color(0x88000000), CircleShape)) {
+                    Icon(Icons.Rounded.ArrowBack, null, tint = V3Text)
+                }
+                Column(Modifier.align(Alignment.BottomStart).padding(20.dp)) {
+                    Text(artist.name, color = V3Text, fontSize = 38.sp, fontWeight = FontWeight.Black, maxLines = 2)
+                    Text("${artist.region} · Artist", color = V3Muted, fontSize = 13.sp)
+                    Text("Artist image via Wikipedia", color = V3Muted, fontSize = 10.sp)
+                }
+            }
+        }
+        item { V3SectionTitle("Popular", "Playable tracks currently available in Sonify") }
+        if (loading) {
+            item { Row(Modifier.fillMaxWidth().padding(32.dp), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator(color = V3Accent) } }
+        } else if (tracks.isEmpty()) {
+            item { V3EmptyState("No licensed stream found here yet", "The artist page is ready. Full mainstream catalogs need a licensed music provider connection.") }
+        } else {
+            items(tracks, key = { it.id }) { track ->
+                V3FunctionalTrackRow(
+                    track = track,
+                    liked = liked.contains(track.id),
+                    onTrack = onTrack,
+                    onToggleLike = { onToggleLike(track.id) },
+                    onAddToPlaylist = { onAddToPlaylist(track) },
+                    onPlayNext = { onPlayNext(track) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun V3DownloadsScreen(onBack: () -> Unit, onTrack: (Track) -> Unit) {
+    val context = LocalContext.current
+    var tracks by remember { mutableStateOf(OfflineStore.allDownloaded(context)) }
+    LazyColumn(Modifier.fillMaxSize().background(V3Bg), contentPadding = PaddingValues(bottom = 24.dp)) {
+        item { V3DetailHeader("Downloads", "Offline music on this device", onBack) }
+        if (tracks.isEmpty()) {
+            item { V3EmptyState("Nothing downloaded yet", "For tracks whose artist/provider allows downloads, tap the download icon in Search or song lists.") }
+        } else {
+            items(tracks, key = { it.id }) { track ->
+                Row(Modifier.fillMaxWidth().clickable { onTrack(track) }.padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    V3Artwork(track, Modifier.size(58.dp).clip(RoundedCornerShape(12.dp)))
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(track.title, color = V3Text, fontWeight = FontWeight.Bold, maxLines = 1)
+                        Text(track.artist, color = V3Muted, fontSize = 12.sp, maxLines = 1)
+                    }
+                    IconButton(onClick = {
+                        OfflineStore.remove(context, track.id)
+                        tracks = OfflineStore.allDownloaded(context)
+                    }) { Icon(Icons.Rounded.DeleteOutline, null, tint = V3Muted) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun V3CategoryCard(category: V3Category, onClick: () -> Unit) {
+    val shade = when (category.id) {
+        "pakistani" -> Color(0xFF174D35)
+        "bollywood" -> Color(0xFF7A3325)
+        "punjabi" -> Color(0xFF765315)
+        "sad" -> Color(0xFF344A6B)
+        "romantic" -> Color(0xFF7A2F4C)
+        else -> Color(0xFF303030)
+    }
+    Box(
+        Modifier.width(154.dp).height(108.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(shade)
+            .clickable(onClick = onClick)
+            .padding(14.dp)
+    ) {
+        Text(category.title, color = V3Text, fontWeight = FontWeight.Black, fontSize = 17.sp, modifier = Modifier.align(Alignment.TopStart))
+        Icon(Icons.Rounded.MusicNote, null, tint = Color.White.copy(alpha = 0.82f), modifier = Modifier.size(42.dp).align(Alignment.BottomEnd))
     }
 }
 
@@ -968,7 +1140,7 @@ private fun V3CategoryScreen(
                     Icon(Icons.Rounded.ArrowBack, null, tint = V3Text)
                 }
                 Column(Modifier.fillMaxWidth().padding(top = 42.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    V3ArtworkUrl(category.artworkUrl, Modifier.size(210.dp).clip(RoundedCornerShape(28.dp)))
+                    V3ArtworkUrl(tracks.firstOrNull()?.artworkUrl.orEmpty(), Modifier.size(210.dp).clip(RoundedCornerShape(28.dp)))
                     Spacer(Modifier.height(18.dp))
                     Text(category.title, color = V3Text, fontWeight = FontWeight.Black, fontSize = 30.sp)
                     Text(category.subtitle, color = V3Muted, fontSize = 14.sp)
@@ -1009,7 +1181,8 @@ private fun V3SearchScreen(
     onCategory: (String) -> Unit,
     onToggleLike: (String) -> Unit,
     onAddToPlaylist: (Track) -> Unit,
-    onPlayNext: (Track) -> Unit
+    onPlayNext: (Track) -> Unit,
+    onArtist: (String) -> Unit
 ) {
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
@@ -1075,6 +1248,14 @@ private fun V3SearchScreen(
 
         if (query.isBlank()) {
             item {
+                Text("Popular artists", color = V3Text, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(12.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    items(ArtistDirectory.popular, key = { it.id }) { artist ->
+                        V3ArtistCard(artist) { onArtist(artist.id) }
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
                 Text("Browse all", color = V3Text, fontSize = 22.sp, fontWeight = FontWeight.Black)
                 Spacer(Modifier.height(14.dp))
             }
@@ -1106,9 +1287,21 @@ private fun V3SearchScreen(
                     CircularProgressIndicator(color = V3Accent, modifier = Modifier.size(30.dp), strokeWidth = 3.dp)
                 }
             }
-        } else if (results.isEmpty()) {
+        } else if (results.isEmpty() && ArtistDirectory.matching(query).isEmpty()) {
             item { V3EmptyState("No tracks found", "Try another song, artist, language or genre.") }
         } else {
+            val artistMatches = ArtistDirectory.matching(query)
+            if (artistMatches.isNotEmpty()) {
+                item {
+                    Text("Artists", color = V3Text, fontWeight = FontWeight.Black, fontSize = 20.sp, modifier = Modifier.padding(vertical = 8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        items(artistMatches, key = { it.id }) { artist -> V3ArtistCard(artist) { onArtist(artist.id) } }
+                    }
+                    Spacer(Modifier.height(18.dp))
+                    Text("Songs", color = V3Text, fontWeight = FontWeight.Black, fontSize = 20.sp)
+                    Spacer(Modifier.height(6.dp))
+                }
+            }
             items(results, key = { it.id }) { track ->
                 V3FunctionalTrackRow(
                     track,
@@ -1128,7 +1321,8 @@ private fun V3LibraryScreen(
     likedCount: Int,
     playlistCount: Int,
     onLiked: () -> Unit,
-    onPlaylists: () -> Unit
+    onPlaylists: () -> Unit,
+    onDownloads: () -> Unit
 ) {
     LazyColumn(Modifier.fillMaxSize().background(V3Bg), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp)) {
         item {
@@ -1138,6 +1332,7 @@ private fun V3LibraryScreen(
             Spacer(Modifier.height(22.dp))
             V3LibraryRow(Icons.Rounded.Favorite, "Liked Songs", "$likedCount saved tracks", onLiked)
             V3LibraryRow(Icons.Rounded.QueueMusic, "Playlists", "$playlistCount playlists", onPlaylists)
+            V3LibraryRow(Icons.Rounded.DownloadForOffline, "Downloads", "Available offline on this device", onDownloads)
         }
     }
 }
@@ -1312,7 +1507,11 @@ private fun V3FunctionalTrackRow(
     onAddToPlaylist: () -> Unit,
     onPlayNext: () -> Unit
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var menuOpen by remember { mutableStateOf(false) }
+    var downloaded by remember(track.id) { mutableStateOf(OfflineStore.isDownloaded(context, track.id)) }
+    var downloading by remember(track.id) { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().clickable { onTrack(track) }.padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         V3Artwork(track, Modifier.size(58.dp).clip(RoundedCornerShape(14.dp)))
         Spacer(Modifier.width(13.dp))
@@ -1322,6 +1521,31 @@ private fun V3FunctionalTrackRow(
         }
         IconButton(onClick = onToggleLike) {
             Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, null, tint = if (liked) V3Accent else V3Muted)
+        }
+        if (track.downloadable) {
+            IconButton(
+                enabled = !downloading,
+                onClick = {
+                    if (downloaded) {
+                        Toast.makeText(context, "Already available offline", Toast.LENGTH_SHORT).show()
+                    } else {
+                        downloading = true
+                        scope.launch {
+                            val result = OfflineStore.download(context, track)
+                            downloaded = result.isSuccess
+                            downloading = false
+                            Toast.makeText(
+                                context,
+                                if (result.isSuccess) "Downloaded for offline listening" else result.exceptionOrNull()?.message ?: "Download failed",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                }
+            ) {
+                if (downloading) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = V3Accent)
+                else Icon(if (downloaded) Icons.Rounded.DownloadDone else Icons.Rounded.DownloadForOffline, null, tint = if (downloaded) V3Accent else V3Muted)
+            }
         }
         Box {
             IconButton(onClick = { menuOpen = true }) { Icon(Icons.Rounded.MoreVert, null, tint = V3Muted) }
@@ -1429,12 +1653,18 @@ private fun V3Artwork(track: Track, modifier: Modifier) {
 @Composable
 private fun V3ArtworkUrl(url: String, modifier: Modifier) {
     val context = LocalContext.current
-    AsyncImage(
-        model = remember(url) { ImageRequest.Builder(context).data(url).crossfade(false).build() },
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-        modifier = modifier.background(V3Surface2)
-    )
+    if (url.isBlank()) {
+        Box(modifier.background(V3Surface2), contentAlignment = Alignment.Center) {
+            Icon(Icons.Rounded.MusicNote, null, tint = V3Muted, modifier = Modifier.size(38.dp))
+        }
+    } else {
+        AsyncImage(
+            model = remember(url) { ImageRequest.Builder(context).data(url).crossfade(false).build() },
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = modifier.background(V3Surface2)
+        )
+    }
 }
 
 @Composable
