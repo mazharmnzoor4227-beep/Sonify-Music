@@ -506,65 +506,79 @@ private fun V3MorphingPlayer(
         val fullHeight = maxHeight
         val collapsedHeight = 70.dp
         val navReserve = 80.dp
-        val travelPx = with(density) { max((fullHeight - collapsedHeight - navReserve).toPx(), 1f) }
-
-        var dragging by remember { mutableStateOf(false) }
-        var dragFraction by remember { mutableFloatStateOf(if (expanded) 0f else 1f) }
-
-        LaunchedEffect(expanded) {
-            if (!dragging) dragFraction = if (expanded) 0f else 1f
+        val travelPx = with(density) {
+            max((fullHeight - collapsedHeight - navReserve).toPx(), 1f)
         }
 
-        val settled by animateFloatAsState(
-            targetValue = if (expanded) 0f else 1f,
+        var dragging by remember(track.id) { mutableStateOf(false) }
+        var dragFraction by remember(track.id) {
+            mutableFloatStateOf(if (expanded) 0f else 1f)
+        }
+        var settleFraction by remember(track.id) {
+            mutableFloatStateOf(if (expanded) 0f else 1f)
+        }
+
+        LaunchedEffect(expanded) {
+            if (!dragging) settleFraction = if (expanded) 0f else 1f
+        }
+
+        val animatedFraction by animateFloatAsState(
+            targetValue = settleFraction,
             animationSpec = spring(
                 dampingRatio = Spring.DampingRatioNoBouncy,
-                stiffness = Spring.StiffnessMediumLow
+                stiffness = Spring.StiffnessMedium
             ),
-            label = "player-settle"
+            label = "player-morph"
         )
 
-        val fraction = if (dragging) dragFraction else settled
-        val playerHeight = (fullHeight.value + (collapsedHeight.value - fullHeight.value) * fraction).dp
+        val fraction = if (dragging) dragFraction else animatedFraction
+        val playerHeight = (
+            fullHeight.value + (collapsedHeight.value - fullHeight.value) * fraction
+        ).dp
         val bottomSpace = (navReserve.value * fraction).dp
         val sidePad = (7f * fraction).dp
         val radius = (16f * fraction).dp
-        // One visual player only: expanded content fades away before the compact controls
-        // become fully visible, so there is never a second mini-player sitting behind it.
-        val expandedAlpha = (1f - fraction * 1.75f).coerceIn(0f, 1f)
-        val miniAlpha = ((fraction - 0.42f) / 0.58f).coerceIn(0f, 1f)
+
+        val expandedAlpha = ((0.72f - fraction) / 0.72f).coerceIn(0f, 1f)
+        val miniAlpha = ((fraction - 0.72f) / 0.28f).coerceIn(0f, 1f)
 
         Surface(
-            color = if (fraction < .55f) V3Bg else Color(0xFF181818),
+            color = V3Bg,
             shape = RoundedCornerShape(radius),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(start = sidePad, end = sidePad, bottom = bottomSpace)
                 .fillMaxWidth()
                 .height(playerHeight)
-                .pointerInput(track.id) {
+                .clip(RoundedCornerShape(radius))
+                .pointerInput(track.id, travelPx) {
                     detectVerticalDragGestures(
                         onDragStart = {
                             dragging = true
                             dragFraction = fraction
+                            settleFraction = fraction
                         },
-                        onVerticalDrag = { _, amount ->
+                        onVerticalDrag = { change, amount ->
+                            change.consume()
                             dragFraction = (dragFraction + amount / travelPx).coerceIn(0f, 1f)
                         },
                         onDragCancel = {
+                            val target = if (dragFraction < 0.5f) 0f else 1f
+                            settleFraction = target
                             dragging = false
-                            onExpandedChange(dragFraction < .5f)
+                            onExpandedChange(target == 0f)
                         },
                         onDragEnd = {
-                            val shouldExpand = dragFraction < .45f
+                            val target = if (dragFraction < 0.5f) 0f else 1f
+                            settleFraction = target
                             dragging = false
-                            onExpandedChange(shouldExpand)
+                            onExpandedChange(target == 0f)
                         }
                     )
                 }
         ) {
             Box(Modifier.fillMaxSize()) {
-                if (expandedAlpha > 0.01f) {
+                if (expandedAlpha > 0.001f) {
                     V3ExpandedPlayerContent(
                         track = track,
                         alpha = expandedAlpha,
@@ -574,7 +588,10 @@ private fun V3MorphingPlayer(
                         liked = liked,
                         shuffle = shuffle,
                         repeatMode = repeatMode,
-                        onCollapse = { onExpandedChange(false) },
+                        onCollapse = {
+                            settleFraction = 1f
+                            onExpandedChange(false)
+                        },
                         onPrevious = onPrevious,
                         onToggle = onToggle,
                         onNext = onNext,
@@ -587,13 +604,16 @@ private fun V3MorphingPlayer(
                     )
                 }
 
-                if (miniAlpha > 0.01f) {
+                if (miniAlpha > 0.001f) {
                     V3MiniPlayerContent(
                         track = track,
                         alpha = miniAlpha,
                         isPlaying = isPlaying,
                         progress = progress,
-                        onOpen = { onExpandedChange(true) },
+                        onOpen = {
+                            settleFraction = 0f
+                            onExpandedChange(true)
+                        },
                         onPrevious = onPrevious,
                         onToggle = onToggle,
                         onNext = onNext,
@@ -728,44 +748,53 @@ private fun V3MiniPlayerContent(
     onNext: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    Column(
+    Box(
         Modifier
             .fillMaxSize()
-            .graphicsLayer { this.alpha = alpha }
+            .graphicsLayer { this.alpha = alpha },
+        contentAlignment = Alignment.BottomCenter
     ) {
-        Row(
+        Column(
             Modifier
                 .fillMaxWidth()
-                .weight(1f)
-                .clickable(onClick = onOpen)
-                .padding(start = 8.dp, end = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .height(70.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color(0xFF181818))
         ) {
-            V3Artwork(track, Modifier.size(46.dp).clip(RoundedCornerShape(9.dp)))
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(track.title, color = V3Text, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(track.artist, color = V3Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .clickable(onClick = onOpen)
+                    .padding(start = 8.dp, end = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                V3Artwork(track, Modifier.size(46.dp).clip(RoundedCornerShape(9.dp)))
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(track.title, color = V3Text, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(track.artist, color = V3Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                IconButton(onClick = onPrevious, modifier = Modifier.size(38.dp)) {
+                    Icon(Icons.Rounded.SkipPrevious, null, tint = V3Text)
+                }
+                IconButton(onClick = onToggle, modifier = Modifier.size(38.dp)) {
+                    Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, tint = V3Text)
+                }
+                IconButton(onClick = onNext, modifier = Modifier.size(38.dp)) {
+                    Icon(Icons.Rounded.SkipNext, null, tint = V3Text)
+                }
+                IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Rounded.Close, null, tint = V3Muted)
+                }
             }
-            IconButton(onClick = onPrevious, modifier = Modifier.size(38.dp)) {
-                Icon(Icons.Rounded.SkipPrevious, null, tint = V3Text)
-            }
-            IconButton(onClick = onToggle, modifier = Modifier.size(38.dp)) {
-                Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, tint = V3Text)
-            }
-            IconButton(onClick = onNext, modifier = Modifier.size(38.dp)) {
-                Icon(Icons.Rounded.SkipNext, null, tint = V3Text)
-            }
-            IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.Rounded.Close, null, tint = V3Muted)
-            }
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier.fillMaxWidth().height(2.dp),
+                color = V3Accent,
+                trackColor = Color(0xFF2A2A2A)
+            )
         }
-        LinearProgressIndicator(
-            progress = { progress },
-            modifier = Modifier.fillMaxWidth().height(2.dp),
-            color = V3Accent,
-            trackColor = Color(0xFF2A2A2A)
-        )
     }
 }
 
