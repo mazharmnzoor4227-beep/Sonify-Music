@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      ORG_GRADLE_PROJECT_AUDIUS_API_KEY: ${{ secrets.AUDIUS_API_KEY }}
+      ORG_GRADLE_PROJECT_JAMENDO_CLIENT_ID: ${{ secrets.JAMENDO_CLIENT_ID }}
     steps:
       - uses: actions/checkout@v4
 
