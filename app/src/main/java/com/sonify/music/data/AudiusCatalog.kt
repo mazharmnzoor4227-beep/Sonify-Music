@@ -10,13 +10,7 @@ import okhttp3.Request
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-/**
- * Read-only live catalog backed by Audius/Open Audio.
- *
- * Public read endpoints are attempted without credentials. When an Audius API key is
- * supplied through the AUDIUS_API_KEY Gradle property it is added as the documented
- * api_key query parameter, which also helps with API-specific access/rate limits.
- */
+/** Read-only live catalog backed by Audius/Open Audio. */
 object AudiusCatalog {
     private const val BASE_URL = "https://api.audius.co/v1"
 
@@ -45,6 +39,20 @@ object AudiusCatalog {
         )
     }
 
+    suspend fun downloadable(query: String, limit: Int = 35): Result<List<Track>> {
+        val clean = query.trim()
+        if (clean.isBlank()) return Result.success(emptyList())
+        return requestTracks(
+            path = "/tracks/search",
+            params = mapOf(
+                "query" to clean,
+                "limit" to limit.coerceIn(1, 100).toString(),
+                "sort_method" to "relevant",
+                "only_downloadable" to "true"
+            )
+        )
+    }
+
     private suspend fun requestTracks(
         path: String,
         params: Map<String, String>
@@ -59,7 +67,7 @@ object AudiusCatalog {
             val request = Request.Builder()
                 .url(builder.build())
                 .header("Accept", "application/json")
-                .header("User-Agent", "Sonify-Android/0.1")
+                .header("User-Agent", "Sonify-Android/0.2")
                 .build()
 
             client.newCall(request).execute().use { response ->
@@ -97,11 +105,13 @@ object AudiusCatalog {
             artwork?.optString("150x150"),
             artwork?.optString("_150x150")
         ).firstOrNull { !it.isNullOrBlank() }
-            ?: "https://picsum.photos/seed/audius-$rawId/600"
+            ?: ""
 
         val key = BuildConfig.AUDIUS_API_KEY.trim()
         val streamUrl = "$BASE_URL/tracks/$rawId/stream" +
             if (key.isNotBlank()) "?api_key=${java.net.URLEncoder.encode(key, "UTF-8")}" else ""
+
+        val canDownload = optBoolean("downloadable", false) || optBoolean("is_downloadable", false)
 
         return Track(
             id = "audius:$rawId",
@@ -110,7 +120,8 @@ object AudiusCatalog {
             artworkUrl = artworkUrl,
             streamUrl = streamUrl,
             source = "Audius",
-            durationMs = optLong("duration", 0L).coerceAtLeast(0L) * 1000L
+            durationMs = optLong("duration", 0L).coerceAtLeast(0L) * 1000L,
+            downloadable = canDownload
         )
     }
 }
