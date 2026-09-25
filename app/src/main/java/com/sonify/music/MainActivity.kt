@@ -2,6 +2,7 @@ package com.sonify.music
 
 import android.Manifest
 import android.content.ComponentName
+import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -16,6 +17,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -31,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -57,6 +60,61 @@ private val Surface2 = Color(0xFF1A1A1A)
 private val Text = Color(0xFFF8F8F8)
 private val Muted = Color(0xFF9B9B9B)
 private val Accent = Color(0xFFB7FF45)
+
+private sealed interface Screen {
+    data object Home : Screen
+    data object Search : Screen
+    data object Library : Screen
+    data class Category(val id: String) : Screen
+    data object Liked : Screen
+    data object Playlists : Screen
+    data class PlaylistDetail(val id: String) : Screen
+}
+
+private data class CategoryModel(
+    val id: String,
+    val title: String,
+    val subtitle: String,
+    val artworkUrl: String,
+    val trackIds: List<String>
+)
+
+private data class PlaylistModel(
+    val id: String,
+    val name: String,
+    val trackIds: List<String>
+)
+
+private val categories = listOf(
+    CategoryModel(
+        id = "sad",
+        title = "Sad Songs",
+        subtitle = "Hindi, Pakistani and heartbreak moods",
+        artworkUrl = "https://picsum.photos/seed/sonify-sad/600",
+        trackIds = listOf("5", "3", "10", "9", "1")
+    ),
+    CategoryModel(
+        id = "chill",
+        title = "Chill",
+        subtitle = "Easy listening for a quiet mood",
+        artworkUrl = "https://picsum.photos/seed/sonify-chill/600",
+        trackIds = listOf("2", "5", "1", "7", "10")
+    ),
+    CategoryModel(
+        id = "workout",
+        title = "Workout",
+        subtitle = "High energy picks",
+        artworkUrl = "https://picsum.photos/seed/sonify-workout/600",
+        trackIds = listOf("6", "7", "8", "4", "2")
+    ),
+    CategoryModel(
+        id = "late-night",
+        title = "Late Night",
+        subtitle = "Dark, slow and cinematic",
+        artworkUrl = "https://picsum.photos/seed/sonify-night/600",
+        trackIds = listOf("1", "3", "9", "10", "5")
+    )
+)
 
 class MainActivity : ComponentActivity() {
     private var controllerFuture: ListenableFuture<MediaController>? = null
@@ -107,16 +165,54 @@ private fun Track.toMediaItem(): MediaItem = MediaItem.Builder()
 @Composable
 private fun SonifyApp(controller: MediaController?) {
     val context = LocalContext.current
-    var tab by remember { mutableIntStateOf(0) }
-    var current by remember { mutableStateOf(DemoCatalog.featured.first()) }
+    var screen by remember { mutableStateOf<Screen>(Screen.Home) }
+    var current by remember { mutableStateOf<Track?>(null) }
     var nowPlayingOpen by remember { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(false) }
     var positionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(1L) }
-    var searchSeed by remember { mutableStateOf("") }
     var shuffle by remember { mutableStateOf(false) }
     var repeatAll by remember { mutableStateOf(false) }
-    val liked = remember { mutableStateListOf<String>() }
+    var playlistDialogOpen by remember { mutableStateOf(false) }
+    var addTrackDialog by remember { mutableStateOf<Track?>(null) }
+
+    val liked = remember {
+        mutableStateListOf<String>().apply { addAll(loadLiked(context)) }
+    }
+    val playlists = remember {
+        mutableStateListOf<PlaylistModel>().apply { addAll(loadPlaylists(context)) }
+    }
+
+    fun toggleLike(id: String) {
+        if (liked.contains(id)) liked.remove(id) else liked.add(id)
+        saveLiked(context, liked)
+    }
+
+    fun createPlaylist(name: String) {
+        val clean = name.trim()
+        if (clean.isBlank()) return
+        playlists.add(
+            PlaylistModel(
+                id = System.currentTimeMillis().toString(),
+                name = clean,
+                trackIds = emptyList()
+            )
+        )
+        savePlaylists(context, playlists)
+    }
+
+    fun addTrackToPlaylist(track: Track, playlistId: String) {
+        val index = playlists.indexOfFirst { it.id == playlistId }
+        if (index < 0) return
+        val playlist = playlists[index]
+        if (track.id in playlist.trackIds) {
+            Toast.makeText(context, "Already in ${playlist.name}", Toast.LENGTH_SHORT).show()
+            return
+        }
+        playlists[index] = playlist.copy(trackIds = playlist.trackIds + track.id)
+        savePlaylists(context, playlists)
+        Toast.makeText(context, "Added to ${playlist.name}", Toast.LENGTH_SHORT).show()
+    }
 
     DisposableEffect(controller) {
         if (controller == null) return@DisposableEffect onDispose { }
@@ -149,24 +245,34 @@ private fun SonifyApp(controller: MediaController?) {
                     DemoCatalog.allTracks.firstOrNull { it.id == id }?.let { current = it }
                 }
             }
-            delay(400)
+            delay(500)
         }
     }
 
     fun playTrack(track: Track) {
-        val player = controller ?: return
+        val player = controller
+        if (player == null) {
+            Toast.makeText(context, "Player is getting ready…", Toast.LENGTH_SHORT).show()
+            return
+        }
         val queue = DemoCatalog.allTracks
         val index = queue.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
         player.setMediaItems(queue.map { it.toMediaItem() }, index, 0L)
         player.prepare()
         player.play()
         current = track
+        nowPlayingOpen = true
     }
 
     fun togglePlayback() {
         val player = controller ?: return
+        val track = current ?: return
         if (player.currentMediaItem == null) {
-            playTrack(current)
+            val queue = DemoCatalog.allTracks
+            val index = queue.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
+            player.setMediaItems(queue.map { it.toMediaItem() }, index, 0L)
+            player.prepare()
+            player.play()
         } else if (player.isPlaying) {
             player.pause()
         } else {
@@ -199,33 +305,35 @@ private fun SonifyApp(controller: MediaController?) {
             containerColor = Bg,
             bottomBar = {
                 Column {
-                    MiniPlayer(
-                        track = current,
-                        isPlaying = isPlaying,
-                        progress = (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f),
-                        onOpen = { nowPlayingOpen = true },
-                        onPrevious = ::previous,
-                        onToggle = ::togglePlayback,
-                        onNext = ::next
-                    )
+                    current?.let { track ->
+                        MiniPlayer(
+                            track = track,
+                            isPlaying = isPlaying,
+                            progress = (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f),
+                            onOpen = { nowPlayingOpen = true },
+                            onPrevious = ::previous,
+                            onToggle = ::togglePlayback,
+                            onNext = ::next
+                        )
+                    }
                     NavigationBar(containerColor = Color(0xFA080808)) {
                         NavigationBarItem(
-                            selected = tab == 0,
-                            onClick = { tab = 0 },
+                            selected = screen is Screen.Home,
+                            onClick = { screen = Screen.Home },
                             icon = { Icon(Icons.Rounded.Home, null) },
                             label = { Text("Home") },
                             colors = navColors()
                         )
                         NavigationBarItem(
-                            selected = tab == 1,
-                            onClick = { tab = 1 },
+                            selected = screen is Screen.Search,
+                            onClick = { screen = Screen.Search },
                             icon = { Icon(Icons.Rounded.Search, null) },
                             label = { Text("Search") },
                             colors = navColors()
                         )
                         NavigationBarItem(
-                            selected = tab == 2,
-                            onClick = { tab = 2 },
+                            selected = screen is Screen.Library || screen is Screen.Liked || screen is Screen.Playlists || screen is Screen.PlaylistDetail,
+                            onClick = { screen = Screen.Library },
                             icon = { Icon(Icons.Rounded.LibraryMusic, null) },
                             label = { Text("Library") },
                             colors = navColors()
@@ -236,78 +344,136 @@ private fun SonifyApp(controller: MediaController?) {
         ) { padding ->
             Box(Modifier.padding(padding)) {
                 AnimatedContent(
-                    targetState = tab,
-                    transitionSpec = { fadeIn(tween(140)) togetherWith fadeOut(tween(100)) },
-                    label = "tabs"
-                ) { selected ->
-                    when (selected) {
-                        0 -> HomeScreen(
+                    targetState = screen,
+                    transitionSpec = { fadeIn(tween(110)) togetherWith fadeOut(tween(90)) },
+                    label = "screen"
+                ) { target ->
+                    when (target) {
+                        Screen.Home -> HomeScreen(
                             onTrack = ::playTrack,
-                            onCategory = { category ->
-                                searchSeed = category
-                                tab = 1
-                            },
-                            onNotification = {
-                                Toast.makeText(context, "You're all caught up", Toast.LENGTH_SHORT).show()
-                            }
+                            onCategory = { screen = Screen.Category(it) }
                         )
 
-                        1 -> SearchScreen(
-                            initialQuery = searchSeed,
+                        Screen.Search -> SearchScreen(
                             liked = liked,
                             onTrack = ::playTrack,
-                            onToggleLike = { id ->
-                                if (liked.contains(id)) liked.remove(id) else liked.add(id)
-                            }
+                            onToggleLike = ::toggleLike,
+                            onAddToPlaylist = { addTrackDialog = it }
                         )
 
-                        else -> LibraryScreen(liked = liked, onTrack = ::playTrack)
+                        Screen.Library -> LibraryScreen(
+                            likedCount = liked.size,
+                            playlistCount = playlists.size,
+                            onLiked = { screen = Screen.Liked },
+                            onPlaylists = { screen = Screen.Playlists }
+                        )
+
+                        is Screen.Category -> {
+                            val category = categories.firstOrNull { it.id == target.id }
+                            if (category != null) {
+                                CategoryScreen(
+                                    category = category,
+                                    onBack = { screen = Screen.Home },
+                                    onTrack = ::playTrack,
+                                    liked = liked,
+                                    onToggleLike = ::toggleLike,
+                                    onAddToPlaylist = { addTrackDialog = it }
+                                )
+                            }
+                        }
+
+                        Screen.Liked -> LikedSongsScreen(
+                            liked = liked,
+                            onBack = { screen = Screen.Library },
+                            onTrack = ::playTrack,
+                            onToggleLike = ::toggleLike,
+                            onAddToPlaylist = { addTrackDialog = it }
+                        )
+
+                        Screen.Playlists -> PlaylistsScreen(
+                            playlists = playlists,
+                            onBack = { screen = Screen.Library },
+                            onCreate = { playlistDialogOpen = true },
+                            onPlaylist = { screen = Screen.PlaylistDetail(it) }
+                        )
+
+                        is Screen.PlaylistDetail -> {
+                            val playlist = playlists.firstOrNull { it.id == target.id }
+                            if (playlist != null) {
+                                PlaylistDetailScreen(
+                                    playlist = playlist,
+                                    onBack = { screen = Screen.Playlists },
+                                    onTrack = ::playTrack,
+                                    onAddSongs = { screen = Screen.Search }
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            if (nowPlayingOpen) {
-                NowPlaying(
-                    track = current,
-                    isPlaying = isPlaying,
-                    positionMs = positionMs,
-                    durationMs = durationMs,
-                    liked = liked.contains(current.id),
-                    shuffle = shuffle,
-                    repeatAll = repeatAll,
-                    onClose = { nowPlayingOpen = false },
-                    onPrevious = ::previous,
-                    onToggle = ::togglePlayback,
-                    onNext = ::next,
-                    onSeek = { controller?.seekTo(it) },
-                    onToggleLike = {
-                        if (liked.contains(current.id)) liked.remove(current.id) else liked.add(current.id)
-                    },
-                    onToggleShuffle = {
-                        controller?.let { player ->
-                            player.shuffleModeEnabled = !player.shuffleModeEnabled
-                            shuffle = player.shuffleModeEnabled
-                        }
-                    },
-                    onToggleRepeat = {
-                        controller?.let { player ->
-                            player.repeatMode = if (player.repeatMode == Player.REPEAT_MODE_ALL) {
-                                Player.REPEAT_MODE_OFF
-                            } else {
-                                Player.REPEAT_MODE_ALL
+            current?.let { track ->
+                if (nowPlayingOpen) {
+                    NowPlaying(
+                        track = track,
+                        isPlaying = isPlaying,
+                        positionMs = positionMs,
+                        durationMs = durationMs,
+                        liked = liked.contains(track.id),
+                        shuffle = shuffle,
+                        repeatAll = repeatAll,
+                        onClose = { nowPlayingOpen = false },
+                        onPrevious = ::previous,
+                        onToggle = ::togglePlayback,
+                        onNext = ::next,
+                        onSeek = { controller?.seekTo(it) },
+                        onToggleLike = { toggleLike(track.id) },
+                        onAddToPlaylist = { addTrackDialog = track },
+                        onToggleShuffle = {
+                            controller?.let { player ->
+                                player.shuffleModeEnabled = !player.shuffleModeEnabled
+                                shuffle = player.shuffleModeEnabled
                             }
-                            repeatAll = player.repeatMode == Player.REPEAT_MODE_ALL
+                        },
+                        onToggleRepeat = {
+                            controller?.let { player ->
+                                player.repeatMode = if (player.repeatMode == Player.REPEAT_MODE_ALL) {
+                                    Player.REPEAT_MODE_OFF
+                                } else {
+                                    Player.REPEAT_MODE_ALL
+                                }
+                                repeatAll = player.repeatMode == Player.REPEAT_MODE_ALL
+                            }
                         }
-                    },
-                    onLyrics = {
-                        Toast.makeText(
-                            context,
-                            "Lyrics will appear when the live catalog provides them",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                )
+                    )
+                }
             }
+        }
+
+        if (playlistDialogOpen) {
+            CreatePlaylistDialog(
+                onDismiss = { playlistDialogOpen = false },
+                onCreate = {
+                    createPlaylist(it)
+                    playlistDialogOpen = false
+                }
+            )
+        }
+
+        addTrackDialog?.let { track ->
+            AddToPlaylistDialog(
+                track = track,
+                playlists = playlists,
+                onDismiss = { addTrackDialog = null },
+                onCreatePlaylist = {
+                    addTrackDialog = null
+                    playlistDialogOpen = true
+                },
+                onAdd = { playlistId ->
+                    addTrackToPlaylist(track, playlistId)
+                    addTrackDialog = null
+                }
+            )
         }
     }
 }
@@ -324,122 +490,181 @@ private fun navColors() = NavigationBarItemDefaults.colors(
 @Composable
 private fun HomeScreen(
     onTrack: (Track) -> Unit,
-    onCategory: (String) -> Unit,
-    onNotification: () -> Unit
+    onCategory: (String) -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(Bg),
         contentPadding = PaddingValues(bottom = 22.dp)
     ) {
-        item { HomeHeader(onNotification) }
+        item { HomeHeader() }
 
         item { SectionTitle("For you", "Fresh picks for your next session") }
         item {
             LazyRow(contentPadding = PaddingValues(horizontal = 20.dp)) {
-                items(DemoCatalog.featured, key = { it.id }) { track -> AlbumCard(track, onTrack) }
+                items(DemoCatalog.featured, key = { it.id }) { track ->
+                    AlbumCard(track, onTrack)
+                }
             }
         }
 
-        item { SectionTitle("Sad & heartbreak", "Pick a mood") }
+        item { SectionTitle("Browse moods", "Pick a category") }
         item {
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                items(listOf("Hindi Sad", "Pakistani Sad", "Heartbreak", "Slow & Acoustic")) { label ->
-                    MoodPill(label) { onCategory(label) }
+                items(categories, key = { it.id }) { category ->
+                    CategoryCard(category) { onCategory(category.id) }
                 }
             }
         }
 
         item { SectionTitle("Trending now", "Most played in Sonify Preview") }
-        items(DemoCatalog.trending, key = { it.id }) { track -> TrackRow(track, onTrack) }
+        items(DemoCatalog.trending, key = { it.id }) { track ->
+            CompactTrackRow(track = track, onTrack = onTrack)
+        }
 
         item { SectionTitle("Late night", "Dark, slow and cinematic") }
         item {
             LazyRow(contentPadding = PaddingValues(horizontal = 20.dp)) {
-                items(DemoCatalog.trending.reversed(), key = { it.id }) { track -> AlbumCard(track, onTrack) }
+                items(DemoCatalog.trending.reversed(), key = { it.id }) { track ->
+                    AlbumCard(track, onTrack)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun HomeHeader(onNotification: () -> Unit) {
-    Box(
-        Modifier
+private fun HomeHeader() {
+    Row(
+        modifier = Modifier
             .fillMaxWidth()
-            .height(168.dp)
-            .background(
-                Brush.verticalGradient(listOf(Color(0xFF18200B), Color(0xFF0A0D06), Bg))
-            )
-            .padding(horizontal = 20.dp, vertical = 18.dp)
+            .padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "SONIFY",
-                    color = Accent,
-                    fontSize = 22.sp,
+                    color = Text,
+                    fontSize = 24.sp,
                     fontWeight = FontWeight.Black,
-                    letterSpacing = 1.2.sp
+                    letterSpacing = 1.sp
                 )
-                Spacer(Modifier.height(5.dp))
-                Text("Good evening", color = Text, fontSize = 28.sp, fontWeight = FontWeight.Black)
-                Text("What do you want to hear?", color = Muted, fontSize = 14.sp)
+                Spacer(Modifier.width(7.dp))
+                Box(Modifier.size(8.dp).background(Accent, CircleShape))
             }
-            IconButton(
-                onClick = onNotification,
-                modifier = Modifier.size(48.dp).background(Color(0xFF1D2415), CircleShape)
-            ) {
-                Icon(Icons.Rounded.NotificationsNone, null, tint = Text)
-            }
+            Spacer(Modifier.height(7.dp))
+            Text("Good evening", color = Muted, fontSize = 14.sp)
         }
 
-        Row(
-            modifier = Modifier.align(Alignment.BottomStart),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        IconButton(
+            onClick = {},
+            modifier = Modifier.size(46.dp).background(Surface2, CircleShape)
         ) {
-            SmallTag("Music")
-            SmallTag("Made for you")
-            SmallTag("Fresh picks")
+            Icon(Icons.Rounded.NotificationsNone, null, tint = Text)
+        }
+        Spacer(Modifier.width(9.dp))
+        Box(
+            modifier = Modifier.size(46.dp).background(Color(0xFF222222), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Rounded.Person, null, tint = Accent)
         }
     }
 }
 
 @Composable
-private fun SmallTag(text: String) {
-    Surface(color = Color(0xFF171717), shape = RoundedCornerShape(50)) {
+private fun CategoryCard(category: CategoryModel, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier.width(154.dp).clickable(onClick = onClick)
+    ) {
+        ArtworkUrl(
+            url = category.artworkUrl,
+            modifier = Modifier
+                .size(154.dp)
+                .clip(RoundedCornerShape(22.dp))
+        )
+        Spacer(Modifier.height(10.dp))
         Text(
-            text,
+            category.title,
             color = Text,
+            fontWeight = FontWeight.Bold,
+            fontSize = 17.sp,
+            maxLines = 1
+        )
+        Text(
+            category.subtitle,
+            color = Muted,
             fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
 
 @Composable
-private fun MoodPill(label: String, onClick: () -> Unit) {
-    Surface(
-        color = Surface2,
-        shape = RoundedCornerShape(18.dp),
-        modifier = Modifier.width(146.dp).height(76.dp).clickable(onClick = onClick)
+private fun CategoryScreen(
+    category: CategoryModel,
+    onBack: () -> Unit,
+    onTrack: (Track) -> Unit,
+    liked: List<String>,
+    onToggleLike: (String) -> Unit,
+    onAddToPlaylist: (Track) -> Unit
+) {
+    val tracks = category.trackIds.mapNotNull { id -> DemoCatalog.allTracks.firstOrNull { it.id == id } }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().background(Bg),
+        contentPadding = PaddingValues(bottom = 24.dp)
     ) {
-        Box(Modifier.padding(14.dp)) {
-            Icon(
-                Icons.Rounded.Favorite,
-                null,
-                tint = Accent,
-                modifier = Modifier.align(Alignment.TopEnd).size(20.dp)
-            )
+        item {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(Color(0xFF1D2510), Bg)))
+                    .padding(horizontal = 20.dp, vertical = 16.dp)
+            ) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.align(Alignment.TopStart).background(Color(0x66000000), CircleShape)
+                ) {
+                    Icon(Icons.Rounded.ArrowBack, null, tint = Text)
+                }
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(top = 36.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    ArtworkUrl(
+                        url = category.artworkUrl,
+                        modifier = Modifier.size(210.dp).clip(RoundedCornerShape(28.dp))
+                    )
+                    Spacer(Modifier.height(18.dp))
+                    Text(category.title, color = Text, fontWeight = FontWeight.Black, fontSize = 30.sp)
+                    Text(category.subtitle, color = Muted, fontSize = 14.sp)
+                    Spacer(Modifier.height(14.dp))
+                }
+            }
+        }
+
+        item {
             Text(
-                label,
+                "Songs",
                 color = Text,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.align(Alignment.BottomStart)
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Black,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp)
+            )
+        }
+
+        items(tracks, key = { it.id }) { track ->
+            FunctionalTrackRow(
+                track = track,
+                liked = liked.contains(track.id),
+                onTrack = onTrack,
+                onToggleLike = { onToggleLike(track.id) },
+                onAddToPlaylist = { onAddToPlaylist(track) }
             )
         }
     }
@@ -447,16 +672,13 @@ private fun MoodPill(label: String, onClick: () -> Unit) {
 
 @Composable
 private fun SearchScreen(
-    initialQuery: String,
     liked: List<String>,
     onTrack: (Track) -> Unit,
-    onToggleLike: (String) -> Unit
+    onToggleLike: (String) -> Unit,
+    onAddToPlaylist: (Track) -> Unit
 ) {
-    var query by remember { mutableStateOf(initialQuery) }
-    LaunchedEffect(initialQuery) { if (initialQuery.isNotBlank()) query = initialQuery }
-
+    var query by remember { mutableStateOf("") }
     val results = remember(query) { DemoCatalog.search(query) }
-    val liveCategory = query.equals("Hindi Sad", true) || query.equals("Pakistani Sad", true)
 
     LazyColumn(
         Modifier.fillMaxSize().background(Bg),
@@ -470,7 +692,7 @@ private fun SearchScreen(
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                placeholder = { Text("Artists, songs, albums...", color = Muted) },
+                placeholder = { Text("Songs, artists, playlists, moods…", color = Muted) },
                 leadingIcon = { Icon(Icons.Rounded.Search, null, tint = Muted) },
                 trailingIcon = {
                     if (query.isNotBlank()) {
@@ -493,42 +715,57 @@ private fun SearchScreen(
             Spacer(Modifier.height(22.dp))
         }
 
-        if (liveCategory) {
+        if (query.isBlank()) {
             item {
-                Surface(color = Surface2, shape = RoundedCornerShape(20.dp)) {
-                    Column(Modifier.padding(18.dp)) {
-                        Text(query, color = Text, fontWeight = FontWeight.Black, fontSize = 20.sp)
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            "This category is ready. Real Hindi and Pakistani sad tracks will appear here after the live music catalog is connected.",
-                            color = Muted,
-                            lineHeight = 20.sp
-                        )
+                Text("Browse all", color = Text, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(14.dp))
+            }
+            items(categories.chunked(2)) { row ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    row.forEach { category ->
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .height(92.dp)
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(Surface2)
+                                .padding(14.dp)
+                        ) {
+                            Text(
+                                category.title,
+                                color = Text,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 17.sp,
+                                modifier = Modifier.align(Alignment.BottomStart)
+                            )
+                        }
                     }
                 }
-                Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.height(12.dp))
             }
-        }
-
-        if (results.isEmpty()) {
+        } else if (results.isEmpty()) {
             item {
                 Column(
-                    Modifier.fillMaxWidth().padding(top = 20.dp),
+                    Modifier.fillMaxWidth().padding(top = 28.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Icon(Icons.Rounded.MusicNote, null, tint = Muted, modifier = Modifier.size(40.dp))
+                    Icon(Icons.Rounded.MusicNote, null, tint = Muted, modifier = Modifier.size(42.dp))
                     Spacer(Modifier.height(10.dp))
                     Text("No preview tracks found", color = Text, fontWeight = FontWeight.Bold)
-                    Text("Try another search", color = Muted)
+                    Text("Live catalog search comes next", color = Muted)
                 }
             }
         } else {
             items(results, key = { it.id }) { track ->
-                SearchResultRow(
+                FunctionalTrackRow(
                     track = track,
                     liked = liked.contains(track.id),
                     onTrack = onTrack,
-                    onToggleLike = { onToggleLike(track.id) }
+                    onToggleLike = { onToggleLike(track.id) },
+                    onAddToPlaylist = { onAddToPlaylist(track) }
                 )
             }
         }
@@ -536,80 +773,231 @@ private fun SearchScreen(
 }
 
 @Composable
-private fun SearchResultRow(
-    track: Track,
-    liked: Boolean,
-    onTrack: (Track) -> Unit,
-    onToggleLike: () -> Unit
+private fun LibraryScreen(
+    likedCount: Int,
+    playlistCount: Int,
+    onLiked: () -> Unit,
+    onPlaylists: () -> Unit
 ) {
-    Row(
-        Modifier.fillMaxWidth().clickable { onTrack(track) }.padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Artwork(track, Modifier.size(58.dp))
-        Spacer(Modifier.width(13.dp))
-        Column(Modifier.weight(1f)) {
-            Text(track.title, color = Text, fontWeight = FontWeight.Bold, maxLines = 1)
-            Text(track.artist, color = Muted, fontSize = 13.sp, maxLines = 1)
-        }
-        IconButton(onClick = onToggleLike) {
-            Icon(
-                if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                null,
-                tint = if (liked) Accent else Muted
-            )
-        }
-    }
-}
-
-@Composable
-private fun LibraryScreen(liked: List<String>, onTrack: (Track) -> Unit) {
-    val likedTracks = DemoCatalog.allTracks.filter { liked.contains(it.id) }
-
     LazyColumn(
         Modifier.fillMaxSize().background(Bg),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp)
     ) {
         item {
             Text("Your Library", color = Text, fontSize = 34.sp, fontWeight = FontWeight.Black)
-            Spacer(Modifier.height(6.dp))
-            Text("Your music, one place.", color = Muted)
-            Spacer(Modifier.height(20.dp))
-            LibraryQuickRow(Icons.Rounded.Favorite, "Liked Songs", "${likedTracks.size} saved tracks")
-            LibraryQuickRow(Icons.Rounded.QueueMusic, "Playlists", "Your mixes")
-            LibraryQuickRow(Icons.Rounded.Download, "Downloads", "Offline music")
-            Spacer(Modifier.height(20.dp))
-            Text("Liked tracks", color = Text, fontSize = 21.sp, fontWeight = FontWeight.Black)
-            Spacer(Modifier.height(8.dp))
-        }
+            Spacer(Modifier.height(5.dp))
+            Text("Saved music and playlists", color = Muted)
+            Spacer(Modifier.height(22.dp))
 
-        if (likedTracks.isEmpty()) {
-            item { Text("Tap the heart on a song to save it here.", color = Muted) }
-        } else {
-            items(likedTracks, key = { it.id }) { track -> TrackRow(track, onTrack) }
+            LibraryNavRow(
+                icon = Icons.Rounded.Favorite,
+                title = "Liked Songs",
+                subtitle = "$likedCount saved tracks",
+                onClick = onLiked
+            )
+            LibraryNavRow(
+                icon = Icons.Rounded.QueueMusic,
+                title = "Playlists",
+                subtitle = "$playlistCount playlists",
+                onClick = onPlaylists
+            )
         }
     }
 }
 
 @Composable
-private fun LibraryQuickRow(
+private fun LibraryNavRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
-    subtitle: String
+    subtitle: String,
+    onClick: () -> Unit
 ) {
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            Modifier.size(54.dp).clip(RoundedCornerShape(16.dp)).background(Surface2),
+            Modifier.size(62.dp).clip(RoundedCornerShape(18.dp)).background(Surface2),
             contentAlignment = Alignment.Center
-        ) { Icon(icon, null, tint = Accent) }
+        ) {
+            Icon(icon, null, tint = Accent, modifier = Modifier.size(28.dp))
+        }
         Spacer(Modifier.width(14.dp))
-        Column {
-            Text(title, color = Text, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+        Column(Modifier.weight(1f)) {
+            Text(title, color = Text, fontWeight = FontWeight.Bold, fontSize = 18.sp)
             Text(subtitle, color = Muted, fontSize = 13.sp)
         }
+        Icon(Icons.Rounded.ChevronRight, null, tint = Muted)
+    }
+}
+
+@Composable
+private fun LikedSongsScreen(
+    liked: List<String>,
+    onBack: () -> Unit,
+    onTrack: (Track) -> Unit,
+    onToggleLike: (String) -> Unit,
+    onAddToPlaylist: (Track) -> Unit
+) {
+    val likedTracks = DemoCatalog.allTracks.filter { it.id in liked }
+
+    LazyColumn(
+        Modifier.fillMaxSize().background(Bg),
+        contentPadding = PaddingValues(bottom = 24.dp)
+    ) {
+        item {
+            DetailHeader(title = "Liked Songs", subtitle = "${likedTracks.size} tracks", onBack = onBack)
+        }
+        if (likedTracks.isEmpty()) {
+            item {
+                EmptyState("No liked songs yet", "Tap the heart on a song and it will appear here.")
+            }
+        } else {
+            items(likedTracks, key = { it.id }) { track ->
+                FunctionalTrackRow(
+                    track = track,
+                    liked = true,
+                    onTrack = onTrack,
+                    onToggleLike = { onToggleLike(track.id) },
+                    onAddToPlaylist = { onAddToPlaylist(track) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistsScreen(
+    playlists: List<PlaylistModel>,
+    onBack: () -> Unit,
+    onCreate: () -> Unit,
+    onPlaylist: (String) -> Unit
+) {
+    LazyColumn(
+        Modifier.fillMaxSize().background(Bg),
+        contentPadding = PaddingValues(bottom = 24.dp)
+    ) {
+        item {
+            DetailHeader(title = "Playlists", subtitle = "Your collections", onBack = onBack)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onCreate)
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    Modifier.size(58.dp).clip(RoundedCornerShape(16.dp)).background(Surface2),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.Add, null, tint = Accent)
+                }
+                Spacer(Modifier.width(14.dp))
+                Text("Create new playlist", color = Text, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            }
+        }
+
+        if (playlists.isEmpty()) {
+            item { EmptyState("No playlists yet", "Create one and add your favorite tracks.") }
+        } else {
+            items(playlists, key = { it.id }) { playlist ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { onPlaylist(playlist.id) }
+                        .padding(horizontal = 20.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        Modifier.size(62.dp).clip(RoundedCornerShape(18.dp)).background(Surface2),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Rounded.QueueMusic, null, tint = Accent)
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(playlist.name, color = Text, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        Text("${playlist.trackIds.size} tracks", color = Muted, fontSize = 13.sp)
+                    }
+                    Icon(Icons.Rounded.ChevronRight, null, tint = Muted)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistDetailScreen(
+    playlist: PlaylistModel,
+    onBack: () -> Unit,
+    onTrack: (Track) -> Unit,
+    onAddSongs: () -> Unit
+) {
+    val tracks = playlist.trackIds.mapNotNull { id -> DemoCatalog.allTracks.firstOrNull { it.id == id } }
+
+    LazyColumn(
+        Modifier.fillMaxSize().background(Bg),
+        contentPadding = PaddingValues(bottom = 24.dp)
+    ) {
+        item {
+            DetailHeader(title = playlist.name, subtitle = "${tracks.size} tracks", onBack = onBack)
+            TextButton(
+                onClick = onAddSongs,
+                modifier = Modifier.padding(horizontal = 12.dp)
+            ) {
+                Icon(Icons.Rounded.Add, null, tint = Accent)
+                Spacer(Modifier.width(6.dp))
+                Text("Add songs", color = Accent, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        if (tracks.isEmpty()) {
+            item { EmptyState("This playlist is empty", "Use a song menu and choose Add to playlist.") }
+        } else {
+            items(tracks, key = { it.id }) { track ->
+                CompactTrackRow(track = track, onTrack = onTrack)
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailHeader(title: String, subtitle: String, onBack: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp)) {
+        IconButton(onClick = onBack) {
+            Icon(Icons.Rounded.ArrowBack, null, tint = Text)
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            title,
+            color = Text,
+            fontWeight = FontWeight.Black,
+            fontSize = 32.sp,
+            modifier = Modifier.padding(horizontal = 8.dp)
+        )
+        Text(
+            subtitle,
+            color = Muted,
+            fontSize = 14.sp,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+        )
+    }
+}
+
+@Composable
+private fun EmptyState(title: String, subtitle: String) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 42.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(Icons.Rounded.MusicNote, null, tint = Muted, modifier = Modifier.size(44.dp))
+        Spacer(Modifier.height(12.dp))
+        Text(title, color = Text, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Spacer(Modifier.height(4.dp))
+        Text(subtitle, color = Muted, fontSize = 13.sp)
     }
 }
 
@@ -624,7 +1012,7 @@ private fun SectionTitle(title: String, subtitle: String) {
 @Composable
 private fun AlbumCard(track: Track, onTrack: (Track) -> Unit) {
     Column(Modifier.width(154.dp).padding(end = 12.dp).clickable { onTrack(track) }) {
-        Artwork(track, Modifier.size(142.dp))
+        Artwork(track, Modifier.size(142.dp).clip(RoundedCornerShape(20.dp)))
         Spacer(Modifier.height(10.dp))
         Text(track.title, color = Text, fontWeight = FontWeight.Bold, maxLines = 1)
         Text(track.artist, color = Muted, fontSize = 13.sp, maxLines = 1)
@@ -632,12 +1020,15 @@ private fun AlbumCard(track: Track, onTrack: (Track) -> Unit) {
 }
 
 @Composable
-private fun TrackRow(track: Track, onTrack: (Track) -> Unit) {
+private fun CompactTrackRow(track: Track, onTrack: (Track) -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clickable { onTrack(track) }.padding(horizontal = 20.dp, vertical = 8.dp),
+        Modifier
+            .fillMaxWidth()
+            .clickable { onTrack(track) }
+            .padding(horizontal = 20.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Artwork(track, Modifier.size(58.dp))
+        Artwork(track, Modifier.size(58.dp).clip(RoundedCornerShape(14.dp)))
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(track.title, color = Text, fontWeight = FontWeight.Bold, maxLines = 1)
@@ -648,21 +1039,51 @@ private fun TrackRow(track: Track, onTrack: (Track) -> Unit) {
 }
 
 @Composable
-private fun Artwork(track: Track, modifier: Modifier) {
-    val context = LocalContext.current
-    val request = remember(track.artworkUrl) {
-        ImageRequest.Builder(context)
-            .data(track.artworkUrl)
-            .crossfade(false)
-            .size(500)
-            .build()
+private fun FunctionalTrackRow(
+    track: Track,
+    liked: Boolean,
+    onTrack: (Track) -> Unit,
+    onToggleLike: () -> Unit,
+    onAddToPlaylist: () -> Unit
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { onTrack(track) }
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Artwork(track, Modifier.size(58.dp).clip(RoundedCornerShape(14.dp)))
+        Spacer(Modifier.width(13.dp))
+        Column(Modifier.weight(1f)) {
+            Text(track.title, color = Text, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(track.artist, color = Muted, fontSize = 13.sp, maxLines = 1)
+        }
+        IconButton(onClick = onToggleLike) {
+            Icon(
+                if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                null,
+                tint = if (liked) Accent else Muted
+            )
+        }
+        Box {
+            IconButton(onClick = { menuOpen = true }) {
+                Icon(Icons.Rounded.MoreVert, null, tint = Muted)
+            }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text("Add to playlist") },
+                    leadingIcon = { Icon(Icons.Rounded.QueueMusic, null) },
+                    onClick = {
+                        menuOpen = false
+                        onAddToPlaylist()
+                    }
+                )
+            }
+        }
     }
-    AsyncImage(
-        model = request,
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-        modifier = modifier.clip(RoundedCornerShape(18.dp))
-    )
 }
 
 @Composable
@@ -675,41 +1096,36 @@ private fun MiniPlayer(
     onToggle: () -> Unit,
     onNext: () -> Unit
 ) {
-    Surface(color = Color(0xFF141414), modifier = Modifier.fillMaxWidth()) {
+    Surface(color = Color(0xFF151515), modifier = Modifier.fillMaxWidth()) {
         Column {
             LinearProgressIndicator(
-                progress = progress,
+                progress = { progress },
                 modifier = Modifier.fillMaxWidth().height(2.dp),
                 color = Accent,
                 trackColor = Color(0xFF2A2A2A)
             )
             Row(
-                Modifier.fillMaxWidth().clickable { onOpen() }.padding(horizontal = 12.dp, vertical = 8.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpen)
+                    .padding(horizontal = 12.dp, vertical = 9.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Artwork(track, Modifier.size(48.dp))
+                Artwork(track, Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)))
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(
-                        track.title,
-                        color = Text,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        track.artist,
-                        color = Muted,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Text(track.title, color = Text, fontWeight = FontWeight.Bold, maxLines = 1)
+                    Text(track.artist, color = Muted, fontSize = 12.sp, maxLines = 1)
                 }
-                IconButton(onClick = onPrevious) { Icon(Icons.Rounded.SkipPrevious, null, tint = Text) }
+                IconButton(onClick = onPrevious) {
+                    Icon(Icons.Rounded.SkipPrevious, null, tint = Text)
+                }
                 IconButton(onClick = onToggle) {
                     Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, tint = Text)
                 }
-                IconButton(onClick = onNext) { Icon(Icons.Rounded.SkipNext, null, tint = Text) }
+                IconButton(onClick = onNext) {
+                    Icon(Icons.Rounded.SkipNext, null, tint = Text)
+                }
             }
         }
     }
@@ -730,19 +1146,47 @@ private fun NowPlaying(
     onNext: () -> Unit,
     onSeek: (Long) -> Unit,
     onToggleLike: () -> Unit,
+    onAddToPlaylist: () -> Unit,
     onToggleShuffle: () -> Unit,
-    onToggleRepeat: () -> Unit,
-    onLyrics: () -> Unit
+    onToggleRepeat: () -> Unit
 ) {
-    Surface(modifier = Modifier.fillMaxSize(), color = Bg) {
+    var dragDistance by remember { mutableFloatStateOf(0f) }
+    val safeDuration = durationMs.coerceAtLeast(1L)
+    val progress = (positionMs.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f)
+
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onDragStart = { dragDistance = 0f },
+                    onVerticalDrag = { _, amount ->
+                        if (amount > 0) dragDistance += amount
+                    },
+                    onDragEnd = {
+                        if (dragDistance > 120f) onClose()
+                        dragDistance = 0f
+                    }
+                )
+            },
+        color = Bg
+    ) {
         Column(
             Modifier
                 .fillMaxSize()
-                .background(Brush.verticalGradient(listOf(Color(0xFF18200B), Bg, Bg)))
+                .background(Brush.verticalGradient(listOf(Color(0xFF202812), Bg, Bg)))
                 .padding(horizontal = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
+            Box(
+                Modifier
+                    .width(44.dp)
+                    .height(5.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(Color(0xFF696969))
+            )
+            Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onClose) {
                     Icon(Icons.Rounded.KeyboardArrowDown, null, tint = Text)
@@ -750,18 +1194,20 @@ private fun NowPlaying(
                 Spacer(Modifier.weight(1f))
                 Text("NOW PLAYING", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = onToggleLike) {
-                    Icon(
-                        if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                        null,
-                        tint = if (liked) Accent else Text
-                    )
+                IconButton(onClick = onAddToPlaylist) {
+                    Icon(Icons.Rounded.PlaylistAdd, null, tint = Text)
                 }
             }
 
-            Spacer(Modifier.height(24.dp))
-            Artwork(track, Modifier.fillMaxWidth().aspectRatio(1f))
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(20.dp))
+            Artwork(
+                track,
+                Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(30.dp))
+            )
+            Spacer(Modifier.height(26.dp))
 
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -773,23 +1219,21 @@ private fun NowPlaying(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Text(track.artist, color = Muted, fontSize = 16.sp)
+                    Text(track.artist, color = Muted, fontSize = 16.sp, maxLines = 1)
                 }
-                Surface(color = Surface2, shape = RoundedCornerShape(50)) {
-                    Text(
-                        track.source.ifBlank { "Sonify" },
-                        color = Muted,
-                        fontSize = 11.sp,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                IconButton(onClick = onToggleLike) {
+                    Icon(
+                        if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                        null,
+                        tint = if (liked) Accent else Text
                     )
                 }
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(22.dp))
             Slider(
-                value = positionMs.coerceAtMost(durationMs).toFloat(),
-                onValueChange = { onSeek(it.toLong()) },
-                valueRange = 0f..durationMs.coerceAtLeast(1L).toFloat(),
+                value = progress,
+                onValueChange = { onSeek((safeDuration * it).toLong()) },
                 colors = SliderDefaults.colors(
                     thumbColor = Accent,
                     activeTrackColor = Accent,
@@ -799,10 +1243,10 @@ private fun NowPlaying(
             Row(Modifier.fillMaxWidth()) {
                 Text(formatTime(positionMs), color = Muted, fontSize = 11.sp)
                 Spacer(Modifier.weight(1f))
-                Text(formatTime(durationMs), color = Muted, fontSize = 11.sp)
+                Text(formatTime(safeDuration), color = Muted, fontSize = 11.sp)
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(14.dp))
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -812,49 +1256,178 @@ private fun NowPlaying(
                     Icon(Icons.Rounded.Shuffle, null, tint = if (shuffle) Accent else Muted)
                 }
                 IconButton(onClick = onPrevious) {
-                    Icon(Icons.Rounded.SkipPrevious, null, tint = Text, modifier = Modifier.size(38.dp))
+                    Icon(Icons.Rounded.SkipPrevious, null, tint = Text, modifier = Modifier.size(36.dp))
                 }
                 FilledIconButton(
                     onClick = onToggle,
                     colors = IconButtonDefaults.filledIconButtonColors(containerColor = Text, contentColor = Bg),
-                    modifier = Modifier.size(72.dp)
+                    modifier = Modifier.size(70.dp)
                 ) {
                     Icon(
                         if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                         null,
-                        modifier = Modifier.size(38.dp)
+                        modifier = Modifier.size(36.dp)
                     )
                 }
                 IconButton(onClick = onNext) {
-                    Icon(Icons.Rounded.SkipNext, null, tint = Text, modifier = Modifier.size(38.dp))
+                    Icon(Icons.Rounded.SkipNext, null, tint = Text, modifier = Modifier.size(36.dp))
                 }
                 IconButton(onClick = onToggleRepeat) {
                     Icon(Icons.Rounded.Repeat, null, tint = if (repeatAll) Accent else Muted)
                 }
             }
 
-            Spacer(Modifier.height(20.dp))
-            Surface(
-                color = Surface2,
-                shape = RoundedCornerShape(20.dp),
-                modifier = Modifier.fillMaxWidth().clickable(onClick = onLyrics)
+            Spacer(Modifier.height(24.dp))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Surface2)
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.QueueMusic, null, tint = Accent)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("Lyrics", color = Text, fontWeight = FontWeight.Bold)
-                        Text("Tap to open", color = Muted, fontSize = 12.sp)
-                    }
-                    Icon(Icons.Rounded.ChevronRight, null, tint = Muted)
-                }
+                Icon(Icons.Rounded.QueueMusic, null, tint = Accent)
+                Spacer(Modifier.width(12.dp))
+                Text("Queue & playlist controls", color = Text, fontWeight = FontWeight.Bold)
             }
         }
     }
 }
 
+@Composable
+private fun CreatePlaylistDialog(onDismiss: () -> Unit, onCreate: (String) -> Unit) {
+    var name by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("New playlist") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                singleLine = true,
+                placeholder = { Text("Playlist name") }
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onCreate(name) }, enabled = name.isNotBlank()) {
+                Text("Create")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+private fun AddToPlaylistDialog(
+    track: Track,
+    playlists: List<PlaylistModel>,
+    onDismiss: () -> Unit,
+    onCreatePlaylist: () -> Unit,
+    onAdd: (String) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add to playlist") },
+        text = {
+            Column {
+                Text(track.title, color = Muted)
+                Spacer(Modifier.height(12.dp))
+                if (playlists.isEmpty()) {
+                    Text("You don't have a playlist yet.")
+                } else {
+                    playlists.forEach { playlist ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { onAdd(playlist.id) }
+                                .padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.QueueMusic, null)
+                            Spacer(Modifier.width(10.dp))
+                            Text(playlist.name, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onCreatePlaylist) { Text("New playlist") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+private fun Artwork(track: Track, modifier: Modifier) {
+    ArtworkUrl(track.artworkUrl, modifier)
+}
+
+@Composable
+private fun ArtworkUrl(url: String, modifier: Modifier) {
+    val context = LocalContext.current
+    AsyncImage(
+        model = remember(url) {
+            ImageRequest.Builder(context)
+                .data(url)
+                .crossfade(false)
+                .build()
+        },
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = modifier.background(Surface2)
+    )
+}
+
 private fun formatTime(ms: Long): String {
-    if (ms <= 0L) return "0:00"
-    val totalSeconds = ms / 1000
-    return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
+    val total = (ms.coerceAtLeast(0L) / 1000L).toInt()
+    val minutes = total / 60
+    val seconds = total % 60
+    return "%d:%02d".format(minutes, seconds)
+}
+
+private fun loadLiked(context: Context): Set<String> {
+    return context.getSharedPreferences("sonify", Context.MODE_PRIVATE)
+        .getStringSet("liked", emptySet())
+        ?.toSet()
+        ?: emptySet()
+}
+
+private fun saveLiked(context: Context, liked: List<String>) {
+    context.getSharedPreferences("sonify", Context.MODE_PRIVATE)
+        .edit()
+        .putStringSet("liked", liked.toSet())
+        .apply()
+}
+
+private fun loadPlaylists(context: Context): List<PlaylistModel> {
+    val raw = context.getSharedPreferences("sonify", Context.MODE_PRIVATE)
+        .getStringSet("playlists", emptySet())
+        ?: emptySet()
+
+    return raw.mapNotNull { entry ->
+        val parts = entry.split("|", limit = 3)
+        if (parts.size < 2) return@mapNotNull null
+        val ids = parts.getOrNull(2)
+            ?.split(",")
+            ?.filter { it.isNotBlank() }
+            ?: emptyList()
+        PlaylistModel(parts[0], parts[1], ids)
+    }.sortedBy { it.name.lowercase() }
+}
+
+private fun savePlaylists(context: Context, playlists: List<PlaylistModel>) {
+    val raw = playlists.map { playlist ->
+        val cleanName = playlist.name.replace("|", " ")
+        "${playlist.id}|$cleanName|${playlist.trackIds.joinToString(",")}" 
+    }.toSet()
+
+    context.getSharedPreferences("sonify", Context.MODE_PRIVATE)
+        .edit()
+        .putStringSet("playlists", raw)
+        .apply()
 }
