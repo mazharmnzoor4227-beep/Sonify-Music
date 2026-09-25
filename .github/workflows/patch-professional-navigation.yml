@@ -1,212 +1,28 @@
-name: Patch professional navigation and back behavior
+name: Patch Navigation
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Apply navigation, back-stack and UI polish
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path('app/src/main/java/com/sonify/music/SonifyActivityV3.kt')
-          s = p.read_text()
-
-          if 'import androidx.activity.compose.BackHandler' not in s:
-              s = s.replace(
-                  'import androidx.activity.ComponentActivity\nimport androidx.activity.compose.setContent',
-                  'import androidx.activity.ComponentActivity\nimport androidx.activity.compose.BackHandler\nimport androidx.activity.compose.setContent'
-              )
-
-          back_handler = '''    BackHandler(
-        enabled = playerExpanded || queueOpen || createPlaylistOpen || addTrackDialog != null || screen !is V3Screen.Home
-    ) {
-        when {
-            queueOpen -> queueOpen = false
-            addTrackDialog != null -> addTrackDialog = null
-            createPlaylistOpen -> createPlaylistOpen = false
-            playerExpanded -> playerExpanded = false
-            screen is V3Screen.PlaylistDetail -> screen = V3Screen.Playlists
-            screen is V3Screen.Playlists || screen is V3Screen.Liked -> screen = V3Screen.Library
-            screen is V3Screen.Category -> screen = V3Screen.Home
-            screen is V3Screen.Search || screen is V3Screen.Library -> screen = V3Screen.Home
-        }
-    }
-
-'''
-          if back_handler not in s:
-              s = s.replace('    MaterialTheme(\n', back_handler + '    MaterialTheme(\n', 1)
-
-          old_nav = '''                bottomBar = {
-                    NavigationBar(containerColor = Color(0xFF080808)) {
-                        NavigationBarItem(
-                            selected = screen is V3Screen.Home,
-                            onClick = { screen = V3Screen.Home },
-                            icon = { Icon(Icons.Rounded.Home, null) },
-                            label = { Text("Home") },
-                            colors = v3NavColors()
-                        )
-                        NavigationBarItem(
-                            selected = screen is V3Screen.Search,
-                            onClick = { screen = V3Screen.Search },
-                            icon = { Icon(Icons.Rounded.Search, null) },
-                            label = { Text("Search") },
-                            colors = v3NavColors()
-                        )
-                        NavigationBarItem(
-                            selected = screen is V3Screen.Library || screen is V3Screen.Liked || screen is V3Screen.Playlists || screen is V3Screen.PlaylistDetail,
-                            onClick = { screen = V3Screen.Library },
-                            icon = { Icon(Icons.Rounded.LibraryMusic, null) },
-                            label = { Text("Library") },
-                            colors = v3NavColors()
-                        )
-                    }
-                }'''
-
-          new_nav = '''                bottomBar = {
-                    Surface(
-                        color = Color(0xFF080808),
-                        shadowElevation = 12.dp
-                    ) {
-                        Column {
-                            HorizontalDivider(color = Color(0xFF202020), thickness = 0.5.dp)
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .height(64.dp)
-                                    .padding(horizontal = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                V3BottomNavItem(
-                                    selected = screen is V3Screen.Home,
-                                    icon = Icons.Rounded.Home,
-                                    label = "Home"
-                                ) { screen = V3Screen.Home }
-                                V3BottomNavItem(
-                                    selected = screen is V3Screen.Search,
-                                    icon = Icons.Rounded.Search,
-                                    label = "Search"
-                                ) { screen = V3Screen.Search }
-                                V3BottomNavItem(
-                                    selected = screen is V3Screen.Library || screen is V3Screen.Liked || screen is V3Screen.Playlists || screen is V3Screen.PlaylistDetail,
-                                    icon = Icons.Rounded.LibraryMusic,
-                                    label = "Library"
-                                ) { screen = V3Screen.Library }
-                            }
-                        }
-                    }
-                }'''
-          if old_nav not in s:
-              raise SystemExit('bottom navigation pattern not found')
-          s = s.replace(old_nav, new_nav, 1)
-
-          old_colors = '''@Composable
-private fun v3NavColors() = NavigationBarItemDefaults.colors(
-    selectedIconColor = V3Accent,
-    selectedTextColor = V3Text,
-    unselectedIconColor = V3Muted,
-    unselectedTextColor = V3Muted,
-    indicatorColor = Color.Transparent
-)
-'''
-
-          new_colors = '''@Composable
-private fun RowScope.V3BottomNavItem(
-    selected: Boolean,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    onClick: () -> Unit
-) {
-    val itemColor = if (selected) V3Accent else V3Muted
-    Column(
-        modifier = Modifier
-            .weight(1f)
-            .fillMaxHeight()
-            .padding(horizontal = 4.dp, vertical = 5.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (selected) Color(0x1017FF45) else Color.Transparent)
-            .clickable(onClick = onClick),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(icon, contentDescription = label, tint = itemColor, modifier = Modifier.size(23.dp))
-        Spacer(Modifier.height(3.dp))
-        Text(
-            label,
-            color = if (selected) V3Text else V3Muted,
-            fontSize = 11.sp,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
-        )
-    }
-}
-'''
-          if old_colors not in s:
-              raise SystemExit('navigation colors helper pattern not found')
-          s = s.replace(old_colors, new_colors, 1)
-
-          old_header = '''        item {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("SONIFY", color = V3Text, fontSize = 25.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
-                    Spacer(Modifier.width(8.dp))
-                    Box(Modifier.size(8.dp).background(V3Accent, CircleShape))
-                }
-                Spacer(Modifier.height(6.dp))
-                Text("Good evening", color = V3Muted, fontSize = 15.sp)
-            }
-        }'''
-
-          new_header = '''        item {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 6.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "SONIFY",
-                        color = V3Text,
-                        fontSize = 23.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 0.8.sp
-                    )
-                    Spacer(Modifier.width(7.dp))
-                    Box(Modifier.size(7.dp).background(V3Accent, CircleShape))
-                }
-                Spacer(Modifier.height(2.dp))
-                Text("Good evening · Your music, your mood", color = V3Muted, fontSize = 12.sp)
-            }
-        }'''
-          if old_header not in s:
-              raise SystemExit('home header pattern not found')
-          s = s.replace(old_header, new_header, 1)
-
-          s = s.replace(
-              'Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 26.dp, bottom = 13.dp)) {',
-              'Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 10.dp)) {',
-              1
-          )
-
-          p.write_text(s)
-          PY
-
-      - name: Commit fixes and remove temporary patch workflows
+      - name: Apply Sonify navigation patch
+        run: python3 .github/patch_nav.py
+      - name: Commit Sonify navigation patch
+        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -f .github/workflows/patch-professional-navigation.yml || true
-          git rm -f .github/workflows/fix-smooth-player.yml || true
           git add app/src/main/java/com/sonify/music/SonifyActivityV3.kt
-          git commit -m "Fix Android back navigation and polish Sonify home UI"
+          git rm -f .github/patch_nav.py
+          git rm -f .github/workflows/patch-professional-navigation.yml
+          git rm -f .github/workflows/fix-smooth-player.yml || true
+          git commit -m "Fix Android back navigation and polish Sonify UI"
           git push
