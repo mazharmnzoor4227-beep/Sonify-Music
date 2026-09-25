@@ -69,6 +69,7 @@ import java.util.concurrent.Executor
 import kotlin.math.max
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 private val V3Bg = Color(0xFF050505)
 private val V3Surface = Color(0xFF151515)
@@ -913,10 +914,15 @@ private fun V3HomeScreen(
     var loading by remember { mutableStateOf(true) }
 
     LaunchedEffect(Unit) {
-        editorial = EditorialFeed.load(context)
-        val onlineTracks = AudiusCatalog.trending(28).getOrDefault(emptyList())
-        if (onlineTracks.isNotEmpty()) liveTracks = CatalogRegistry.remember(context, onlineTracks)
-        loading = false
+        try {
+            editorial = withTimeoutOrNull(8000) { EditorialFeed.load(context) }.orEmpty()
+            val onlineTracks = withTimeoutOrNull(8000) {
+                AudiusCatalog.trending(28).getOrDefault(emptyList())
+            }.orEmpty()
+            if (onlineTracks.isNotEmpty()) liveTracks = CatalogRegistry.remember(context, onlineTracks)
+        } finally {
+            loading = false
+        }
     }
 
     val freshTracks = liveTracks.take(12).ifEmpty { DemoCatalog.featured }
@@ -928,12 +934,12 @@ private fun V3HomeScreen(
         item {
             Column(
                 Modifier.fillMaxWidth()
-                    .background(Brush.verticalGradient(listOf(Color(0xFF16220C), V3Bg)))
-                    .padding(start = 18.dp, end = 12.dp, top = 14.dp, bottom = 10.dp)
+                    .background(V3Bg)
+                    .padding(start = 18.dp, end = 12.dp, top = 10.dp, bottom = 8.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Good evening", color = V3Text, fontSize = 28.sp, fontWeight = FontWeight.Black)
+                        Text("Good evening", color = V3Text, fontSize = 25.sp, fontWeight = FontWeight.Black)
                         Text("Your music, updated live", color = V3Muted, fontSize = 12.sp)
                     }
                     IconButton(
@@ -1024,7 +1030,22 @@ private fun V3ArtistPortrait(artist: ArtistProfile, modifier: Modifier) {
         resolved = true
     }
     if (!image.isNullOrBlank()) {
-        V3ArtworkUrl(image.orEmpty(), modifier)
+        val context = LocalContext.current
+        AsyncImage(
+            model = remember(image) {
+                ImageRequest.Builder(context)
+                    .data(image)
+                    .crossfade(true)
+                    .build()
+            },
+            contentDescription = artist.name,
+            contentScale = ContentScale.Crop,
+            modifier = modifier.background(V3Surface2),
+            onError = {
+                image = null
+                resolved = true
+            }
+        )
     } else {
         Box(modifier.background(V3Surface2), contentAlignment = Alignment.Center) {
             Text(v3Initials(artist.name), color = V3Text, fontWeight = FontWeight.Black, fontSize = 30.sp)
