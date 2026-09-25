@@ -7,5 +7,6 @@ data class Track(
     val artworkUrl: String,
     val streamUrl: String = "",
     val source: String = "",
-    val durationMs: Long = 0L
+    val durationMs: Long = 0L,
+    val downloadable: Boolean = false
 )
