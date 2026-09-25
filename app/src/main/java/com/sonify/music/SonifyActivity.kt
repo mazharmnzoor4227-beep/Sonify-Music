@@ -11,6 +11,9 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -55,24 +58,24 @@ import com.sonify.music.playback.PlaybackService
 import java.util.concurrent.Executor
 import kotlinx.coroutines.delay
 
-private val SonifyBg = Color(0xFF050505)
-private val SonifySurface = Color(0xFF141414)
-private val SonifySurface2 = Color(0xFF1C1C1C)
-private val SonifyText = Color(0xFFF7F7F7)
-private val SonifyMuted = Color(0xFF9D9D9D)
-private val SonifyAccent = Color(0xFFB7FF45)
+private val Bg = Color(0xFF050505)
+private val Surface1 = Color(0xFF141414)
+private val Surface2 = Color(0xFF1C1C1C)
+private val Text = Color(0xFFF7F7F7)
+private val Muted = Color(0xFF9D9D9D)
+private val Accent = Color(0xFFB7FF45)
 
-private sealed interface SonifyScreen {
-    data object Home : SonifyScreen
-    data object Search : SonifyScreen
-    data object Library : SonifyScreen
-    data class Category(val id: String) : SonifyScreen
-    data object Liked : SonifyScreen
-    data object Playlists : SonifyScreen
-    data class PlaylistDetail(val id: String) : SonifyScreen
+private sealed interface Screen {
+    data object Home : Screen
+    data object Search : Screen
+    data object Library : Screen
+    data class Category(val id: String) : Screen
+    data object Liked : Screen
+    data object Playlists : Screen
+    data class PlaylistDetail(val id: String) : Screen
 }
 
-private data class SonifyCategory(
+private data class Category(
     val id: String,
     val title: String,
     val subtitle: String,
@@ -80,41 +83,21 @@ private data class SonifyCategory(
     val trackIds: List<String>
 )
 
-private data class SonifyPlaylist(
+private data class Playlist(
     val id: String,
     val name: String,
     val trackIds: List<String>
 )
 
-private val sonifyCategories = listOf(
-    SonifyCategory(
-        "sad",
-        "Sad Songs",
-        "Hindi, Pakistani and heartbreak moods",
-        "https://picsum.photos/seed/sonify-sad-v2/600",
-        listOf("5", "3", "10", "9", "1")
-    ),
-    SonifyCategory(
-        "chill",
-        "Chill",
-        "Easy listening for a quiet mood",
-        "https://picsum.photos/seed/sonify-chill-v2/600",
-        listOf("2", "5", "1", "7", "10")
-    ),
-    SonifyCategory(
-        "workout",
-        "Workout",
-        "High-energy picks",
-        "https://picsum.photos/seed/sonify-workout-v2/600",
-        listOf("6", "7", "8", "4", "2")
-    ),
-    SonifyCategory(
-        "night",
-        "Late Night",
-        "Dark, slow and cinematic",
-        "https://picsum.photos/seed/sonify-night-v2/600",
-        listOf("1", "3", "9", "10", "5")
-    )
+private val categories = listOf(
+    Category("sad", "Sad Songs", "Hindi, Pakistani and heartbreak moods",
+        "https://picsum.photos/seed/sonify-sad-v3/600", listOf("5","3","10","9","1")),
+    Category("chill", "Chill", "Easy listening for a quiet mood",
+        "https://picsum.photos/seed/sonify-chill-v3/600", listOf("2","5","1","7","10")),
+    Category("workout", "Workout", "High-energy picks",
+        "https://picsum.photos/seed/sonify-workout-v3/600", listOf("6","7","8","4","2")),
+    Category("night", "Late Night", "Dark, slow and cinematic",
+        "https://picsum.photos/seed/sonify-night-v3/600", listOf("1","3","9","10","5"))
 )
 
 class SonifyActivity : ComponentActivity() {
@@ -124,8 +107,7 @@ class SonifyActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        if (
-            Build.VERSION.SDK_INT >= 33 &&
+        if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
@@ -151,7 +133,7 @@ class SonifyActivity : ComponentActivity() {
     }
 }
 
-private fun Track.sonifyMediaItem(): MediaItem = MediaItem.Builder()
+private fun Track.toMediaItem(): MediaItem = MediaItem.Builder()
     .setMediaId(id)
     .setUri(streamUrl)
     .setMediaMetadata(
@@ -166,9 +148,9 @@ private fun Track.sonifyMediaItem(): MediaItem = MediaItem.Builder()
 @Composable
 private fun SonifyRoot(controller: MediaController?) {
     val context = LocalContext.current
-    var screen by remember { mutableStateOf<SonifyScreen>(SonifyScreen.Home) }
+    var screen by remember { mutableStateOf<Screen>(Screen.Home) }
     var current by remember { mutableStateOf<Track?>(null) }
-    var fullPlayerOpen by remember { mutableStateOf(false) }
+    var playerExpanded by remember { mutableStateOf(false) }
     var queueOpen by remember { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(false) }
     var positionMs by remember { mutableLongStateOf(0L) }
@@ -176,31 +158,31 @@ private fun SonifyRoot(controller: MediaController?) {
     var shuffle by remember { mutableStateOf(false) }
     var repeatMode by remember { mutableIntStateOf(Player.REPEAT_MODE_OFF) }
     var createPlaylistOpen by remember { mutableStateOf(false) }
-    var addTrackToPlaylist by remember { mutableStateOf<Track?>(null) }
+    var addTrackDialog by remember { mutableStateOf<Track?>(null) }
 
     val liked = remember {
-        mutableStateListOf<String>().apply { addAll(loadSonifyLiked(context)) }
+        mutableStateListOf<String>().apply { addAll(loadLiked(context)) }
     }
     val playlists = remember {
-        mutableStateListOf<SonifyPlaylist>().apply { addAll(loadSonifyPlaylists(context)) }
+        mutableStateListOf<Playlist>().apply { addAll(loadPlaylists(context)) }
     }
 
     fun toggleLike(id: String) {
         if (liked.contains(id)) liked.remove(id) else liked.add(id)
-        saveSonifyLiked(context, liked)
+        saveLiked(context, liked)
     }
 
     fun createPlaylist(name: String) {
         val clean = name.trim()
         if (clean.isBlank()) return
-        playlists.add(SonifyPlaylist(System.currentTimeMillis().toString(), clean, emptyList()))
-        saveSonifyPlaylists(context, playlists)
+        playlists.add(Playlist(System.currentTimeMillis().toString(), clean, emptyList()))
+        savePlaylists(context, playlists)
     }
 
     fun deletePlaylist(id: String) {
         playlists.removeAll { it.id == id }
-        saveSonifyPlaylists(context, playlists)
-        screen = SonifyScreen.Playlists
+        savePlaylists(context, playlists)
+        screen = Screen.Playlists
     }
 
     fun addToPlaylist(track: Track, playlistId: String) {
@@ -212,7 +194,7 @@ private fun SonifyRoot(controller: MediaController?) {
             return
         }
         playlists[index] = playlist.copy(trackIds = playlist.trackIds + track.id)
-        saveSonifyPlaylists(context, playlists)
+        savePlaylists(context, playlists)
         Toast.makeText(context, "Added to ${playlist.name}", Toast.LENGTH_SHORT).show()
     }
 
@@ -248,11 +230,11 @@ private fun SonifyRoot(controller: MediaController?) {
                     DemoCatalog.allTracks.firstOrNull { it.id == id }?.let { current = it }
                 }
             }
-            delay(400)
+            delay(350)
         }
     }
 
-    fun playTrack(track: Track, openPlayer: Boolean = true) {
+    fun playTrack(track: Track, expand: Boolean = true) {
         val player = controller
         if (player == null) {
             Toast.makeText(context, "Player is getting ready…", Toast.LENGTH_SHORT).show()
@@ -260,11 +242,11 @@ private fun SonifyRoot(controller: MediaController?) {
         }
         val queue = DemoCatalog.allTracks
         val start = queue.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
-        player.setMediaItems(queue.map { it.sonifyMediaItem() }, start, 0L)
+        player.setMediaItems(queue.map { it.toMediaItem() }, start, 0L)
         player.prepare()
         player.play()
         current = track
-        fullPlayerOpen = openPlayer
+        playerExpanded = expand
     }
 
     fun togglePlayback() {
@@ -281,7 +263,8 @@ private fun SonifyRoot(controller: MediaController?) {
 
     fun previous() {
         controller?.let { player ->
-            if (player.hasPreviousMediaItem()) player.seekToPreviousMediaItem() else player.seekTo(0L)
+            if (player.hasPreviousMediaItem()) player.seekToPreviousMediaItem()
+            else player.seekTo(0L)
         }
     }
 
@@ -298,7 +281,7 @@ private fun SonifyRoot(controller: MediaController?) {
             return
         }
         val insertAt = (player.currentMediaItemIndex + 1).coerceAtMost(player.mediaItemCount)
-        player.addMediaItem(insertAt, track.sonifyMediaItem())
+        player.addMediaItem(insertAt, track.toMediaItem())
         Toast.makeText(context, "Playing next", Toast.LENGTH_SHORT).show()
     }
 
@@ -306,7 +289,7 @@ private fun SonifyRoot(controller: MediaController?) {
         controller?.stop()
         controller?.clearMediaItems()
         current = null
-        fullPlayerOpen = false
+        playerExpanded = false
         queueOpen = false
         positionMs = 0L
         durationMs = 1L
@@ -315,148 +298,144 @@ private fun SonifyRoot(controller: MediaController?) {
 
     MaterialTheme(
         colorScheme = darkColorScheme(
-            background = SonifyBg,
-            surface = SonifySurface,
-            primary = SonifyAccent,
-            onBackground = SonifyText,
-            onSurface = SonifyText
+            background = Bg,
+            surface = Surface1,
+            primary = Accent,
+            onBackground = Text,
+            onSurface = Text
         )
     ) {
         Scaffold(
-            containerColor = SonifyBg,
+            containerColor = Bg,
             bottomBar = {
-                Column {
-                    current?.let { track ->
-                        SonifyMiniPlayer(
-                            track = track,
-                            isPlaying = isPlaying,
-                            progress = (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f),
-                            onOpen = { fullPlayerOpen = true },
-                            onToggle = ::togglePlayback,
-                            onDismiss = ::dismissPlayer
-                        )
-                    }
-                    NavigationBar(containerColor = Color(0xFF080808)) {
-                        NavigationBarItem(
-                            selected = screen is SonifyScreen.Home,
-                            onClick = { screen = SonifyScreen.Home },
-                            icon = { Icon(Icons.Rounded.Home, null) },
-                            label = { Text("Home") },
-                            colors = sonifyNavColors()
-                        )
-                        NavigationBarItem(
-                            selected = screen is SonifyScreen.Search,
-                            onClick = { screen = SonifyScreen.Search },
-                            icon = { Icon(Icons.Rounded.Search, null) },
-                            label = { Text("Search") },
-                            colors = sonifyNavColors()
-                        )
-                        NavigationBarItem(
-                            selected = screen is SonifyScreen.Library || screen is SonifyScreen.Liked || screen is SonifyScreen.Playlists || screen is SonifyScreen.PlaylistDetail,
-                            onClick = { screen = SonifyScreen.Library },
-                            icon = { Icon(Icons.Rounded.LibraryMusic, null) },
-                            label = { Text("Library") },
-                            colors = sonifyNavColors()
-                        )
-                    }
+                NavigationBar(containerColor = Color(0xFF080808)) {
+                    NavigationBarItem(
+                        selected = screen is Screen.Home,
+                        onClick = { screen = Screen.Home },
+                        icon = { Icon(Icons.Rounded.Home, null) },
+                        label = { Text("Home") },
+                        colors = navColors()
+                    )
+                    NavigationBarItem(
+                        selected = screen is Screen.Search,
+                        onClick = { screen = Screen.Search },
+                        icon = { Icon(Icons.Rounded.Search, null) },
+                        label = { Text("Search") },
+                        colors = navColors()
+                    )
+                    NavigationBarItem(
+                        selected = screen is Screen.Library ||
+                            screen is Screen.Liked ||
+                            screen is Screen.Playlists ||
+                            screen is Screen.PlaylistDetail,
+                        onClick = { screen = Screen.Library },
+                        icon = { Icon(Icons.Rounded.LibraryMusic, null) },
+                        label = { Text("Library") },
+                        colors = navColors()
+                    )
                 }
             }
         ) { padding ->
-            Box(Modifier.padding(padding)) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            ) {
                 AnimatedContent(
                     targetState = screen,
                     transitionSpec = { fadeIn(tween(100)) togetherWith fadeOut(tween(80)) },
-                    label = "sonify-screen"
+                    label = "screen"
                 ) { target ->
                     when (target) {
-                        SonifyScreen.Home -> SonifyHomeScreen(
+                        Screen.Home -> HomeScreen(
                             onTrack = { playTrack(it, true) },
-                            onCategory = { screen = SonifyScreen.Category(it) }
+                            onCategory = { screen = Screen.Category(it) }
                         )
 
-                        SonifyScreen.Search -> SonifySearchScreen(
+                        Screen.Search -> SearchScreen(
                             liked = liked,
                             onTrack = { playTrack(it, true) },
-                            onCategory = { screen = SonifyScreen.Category(it) },
+                            onCategory = { screen = Screen.Category(it) },
                             onToggleLike = ::toggleLike,
-                            onAddToPlaylist = { addTrackToPlaylist = it },
+                            onAddToPlaylist = { addTrackDialog = it },
                             onPlayNext = ::playNext
                         )
 
-                        SonifyScreen.Library -> SonifyLibraryScreen(
+                        Screen.Library -> LibraryScreen(
                             likedCount = liked.size,
                             playlistCount = playlists.size,
-                            onLiked = { screen = SonifyScreen.Liked },
-                            onPlaylists = { screen = SonifyScreen.Playlists }
+                            onLiked = { screen = Screen.Liked },
+                            onPlaylists = { screen = Screen.Playlists }
                         )
 
-                        is SonifyScreen.Category -> {
-                            val category = sonifyCategories.firstOrNull { it.id == target.id }
+                        is Screen.Category -> {
+                            val category = categories.firstOrNull { it.id == target.id }
                             if (category != null) {
-                                SonifyCategoryScreen(
+                                CategoryScreen(
                                     category = category,
                                     liked = liked,
-                                    onBack = { screen = SonifyScreen.Home },
+                                    onBack = { screen = Screen.Home },
                                     onTrack = { playTrack(it, true) },
                                     onToggleLike = ::toggleLike,
-                                    onAddToPlaylist = { addTrackToPlaylist = it },
+                                    onAddToPlaylist = { addTrackDialog = it },
                                     onPlayNext = ::playNext
                                 )
                             }
                         }
 
-                        SonifyScreen.Liked -> SonifyLikedScreen(
+                        Screen.Liked -> LikedScreen(
                             liked = liked,
-                            onBack = { screen = SonifyScreen.Library },
+                            onBack = { screen = Screen.Library },
                             onTrack = { playTrack(it, true) },
                             onToggleLike = ::toggleLike,
-                            onAddToPlaylist = { addTrackToPlaylist = it },
+                            onAddToPlaylist = { addTrackDialog = it },
                             onPlayNext = ::playNext
                         )
 
-                        SonifyScreen.Playlists -> SonifyPlaylistsScreen(
+                        Screen.Playlists -> PlaylistsScreen(
                             playlists = playlists,
-                            onBack = { screen = SonifyScreen.Library },
+                            onBack = { screen = Screen.Library },
                             onCreate = { createPlaylistOpen = true },
-                            onOpenPlaylist = { screen = SonifyScreen.PlaylistDetail(it) }
+                            onOpen = { screen = Screen.PlaylistDetail(it) }
                         )
 
-                        is SonifyScreen.PlaylistDetail -> {
+                        is Screen.PlaylistDetail -> {
                             val playlist = playlists.firstOrNull { it.id == target.id }
                             if (playlist != null) {
-                                SonifyPlaylistDetailScreen(
+                                PlaylistDetailScreen(
                                     playlist = playlist,
-                                    onBack = { screen = SonifyScreen.Playlists },
+                                    onBack = { screen = Screen.Playlists },
                                     onTrack = { playTrack(it, true) },
-                                    onAddSongs = { screen = SonifyScreen.Search },
+                                    onAddSongs = { screen = Screen.Search },
                                     onDelete = { deletePlaylist(playlist.id) }
                                 )
                             }
                         }
                     }
                 }
-            }
 
-            current?.let { track ->
-                if (fullPlayerOpen) {
-                    SonifyNowPlaying(
+                current?.let { track ->
+                    MorphingPlayer(
+                        modifier = Modifier.align(Alignment.BottomCenter),
                         track = track,
+                        expanded = playerExpanded,
+                        onExpandedChange = { playerExpanded = it },
                         isPlaying = isPlaying,
                         positionMs = positionMs,
                         durationMs = durationMs,
                         liked = liked.contains(track.id),
                         shuffle = shuffle,
                         repeatMode = repeatMode,
-                        onCollapse = { fullPlayerOpen = false },
                         onPrevious = ::previous,
                         onToggle = ::togglePlayback,
                         onNext = ::next,
+                        onDismiss = ::dismissPlayer,
                         onSeek = { controller?.seekTo(it) },
                         onToggleLike = { toggleLike(track.id) },
-                        onAddToPlaylist = { addTrackToPlaylist = track },
+                        onAddToPlaylist = { addTrackDialog = track },
                         onQueue = { queueOpen = true },
                         onToggleShuffle = {
-                            controller?.let { player -> player.shuffleModeEnabled = !player.shuffleModeEnabled }
+                            controller?.let { it.shuffleModeEnabled = !it.shuffleModeEnabled }
                         },
                         onToggleRepeat = {
                             controller?.let { player ->
@@ -473,19 +452,18 @@ private fun SonifyRoot(controller: MediaController?) {
         }
 
         if (queueOpen) {
-            SonifyQueueSheet(
-                controller = controller,
+            QueueSheet(
                 current = current,
                 onDismiss = { queueOpen = false },
-                onTrack = { track ->
+                onTrack = {
                     queueOpen = false
-                    playTrack(track, true)
+                    playTrack(it, true)
                 }
             )
         }
 
         if (createPlaylistOpen) {
-            SonifyCreatePlaylistDialog(
+            CreatePlaylistDialog(
                 onDismiss = { createPlaylistOpen = false },
                 onCreate = {
                     createPlaylist(it)
@@ -494,18 +472,18 @@ private fun SonifyRoot(controller: MediaController?) {
             )
         }
 
-        addTrackToPlaylist?.let { track ->
-            SonifyAddToPlaylistDialog(
+        addTrackDialog?.let { track ->
+            AddToPlaylistDialog(
                 track = track,
                 playlists = playlists,
-                onDismiss = { addTrackToPlaylist = null },
+                onDismiss = { addTrackDialog = null },
                 onCreatePlaylist = {
-                    addTrackToPlaylist = null
+                    addTrackDialog = null
                     createPlaylistOpen = true
                 },
-                onAdd = { playlistId ->
-                    addToPlaylist(track, playlistId)
-                    addTrackToPlaylist = null
+                onAdd = {
+                    addToPlaylist(track, it)
+                    addTrackDialog = null
                 }
             )
         }
@@ -513,114 +491,76 @@ private fun SonifyRoot(controller: MediaController?) {
 }
 
 @Composable
-private fun sonifyNavColors() = NavigationBarItemDefaults.colors(
-    selectedIconColor = SonifyAccent,
-    selectedTextColor = SonifyText,
-    unselectedIconColor = SonifyMuted,
-    unselectedTextColor = SonifyMuted,
+private fun navColors() = NavigationBarItemDefaults.colors(
+    selectedIconColor = Accent,
+    selectedTextColor = Text,
+    unselectedIconColor = Muted,
+    unselectedTextColor = Muted,
     indicatorColor = Color.Transparent
 )
 
 @Composable
-private fun SonifyHomeScreen(onTrack: (Track) -> Unit, onCategory: (String) -> Unit) {
+private fun HomeScreen(onTrack: (Track) -> Unit, onCategory: (String) -> Unit) {
     LazyColumn(
-        modifier = Modifier.fillMaxSize().background(SonifyBg),
-        contentPadding = PaddingValues(bottom = 20.dp)
+        modifier = Modifier.fillMaxSize().background(Bg),
+        contentPadding = PaddingValues(bottom = 96.dp)
     ) {
         item {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("SONIFY", color = SonifyText, fontSize = 25.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
-                    Spacer(Modifier.width(8.dp))
-                    Box(Modifier.size(8.dp).background(SonifyAccent, CircleShape))
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 22.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("SONIFY", color = Text, fontSize = 24.sp, fontWeight = FontWeight.Black)
+                        Spacer(Modifier.width(7.dp))
+                        Box(Modifier.size(8.dp).background(Accent, CircleShape))
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text("Good evening", color = Muted, fontSize = 14.sp)
                 }
-                Spacer(Modifier.height(6.dp))
-                Text("Good evening", color = SonifyMuted, fontSize = 15.sp)
             }
         }
 
-        item { SonifySectionTitle("For you", "Fresh picks for your next session") }
+        item { SectionTitle("For you", "Fresh picks for your next session") }
         item {
             LazyRow(contentPadding = PaddingValues(horizontal = 20.dp)) {
-                items(DemoCatalog.featured, key = { it.id }) { track -> SonifyAlbumCard(track, onTrack) }
+                items(DemoCatalog.featured, key = { it.id }) { track ->
+                    AlbumCard(track, onTrack)
+                }
             }
         }
 
-        item { SonifySectionTitle("Browse moods", "Pick a category") }
+        item { SectionTitle("Browse moods", "Pick a category") }
         item {
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                items(sonifyCategories, key = { it.id }) { category ->
-                    SonifyCategoryCard(category) { onCategory(category.id) }
+                items(categories, key = { it.id }) { category ->
+                    CategoryCard(category) { onCategory(category.id) }
                 }
             }
         }
 
-        item { SonifySectionTitle("Trending now", "Popular in Sonify Preview") }
+        item { SectionTitle("Trending now", "Most played in Sonify Preview") }
         items(DemoCatalog.trending, key = { it.id }) { track ->
-            SonifyCompactTrackRow(track, onTrack)
+            CompactTrackRow(track, onTrack)
         }
-    }
-}
 
-@Composable
-private fun SonifyCategoryCard(category: SonifyCategory, onClick: () -> Unit) {
-    Column(Modifier.width(154.dp).clickable(onClick = onClick)) {
-        SonifyArtworkUrl(category.artworkUrl, Modifier.size(154.dp).clip(RoundedCornerShape(22.dp)))
-        Spacer(Modifier.height(9.dp))
-        Text(category.title, color = SonifyText, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 1)
-        Text(category.subtitle, color = SonifyMuted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-    }
-}
-
-@Composable
-private fun SonifyCategoryScreen(
-    category: SonifyCategory,
-    liked: List<String>,
-    onBack: () -> Unit,
-    onTrack: (Track) -> Unit,
-    onToggleLike: (String) -> Unit,
-    onAddToPlaylist: (Track) -> Unit,
-    onPlayNext: (Track) -> Unit
-) {
-    val tracks = category.trackIds.mapNotNull { id -> DemoCatalog.allTracks.firstOrNull { it.id == id } }
-    LazyColumn(Modifier.fillMaxSize().background(SonifyBg), contentPadding = PaddingValues(bottom = 24.dp)) {
+        item { SectionTitle("Late night", "Dark, slow and cinematic") }
         item {
-            Box(
-                Modifier.fillMaxWidth()
-                    .background(Brush.verticalGradient(listOf(Color(0xFF202A12), SonifyBg)))
-                    .padding(horizontal = 20.dp, vertical = 16.dp)
-            ) {
-                IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart).background(Color(0x66000000), CircleShape)) {
-                    Icon(Icons.Rounded.ArrowBack, null, tint = SonifyText)
-                }
-                Column(Modifier.fillMaxWidth().padding(top = 42.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    SonifyArtworkUrl(category.artworkUrl, Modifier.size(210.dp).clip(RoundedCornerShape(28.dp)))
-                    Spacer(Modifier.height(18.dp))
-                    Text(category.title, color = SonifyText, fontWeight = FontWeight.Black, fontSize = 30.sp)
-                    Text(category.subtitle, color = SonifyMuted, fontSize = 14.sp)
-                    Spacer(Modifier.height(14.dp))
+            LazyRow(contentPadding = PaddingValues(horizontal = 20.dp)) {
+                items(DemoCatalog.trending.reversed(), key = { it.id }) { track ->
+                    AlbumCard(track, onTrack)
                 }
             }
         }
-        item { SonifySectionTitle("Songs", "Tap a track to open the player") }
-        items(tracks, key = { it.id }) { track ->
-            SonifyFunctionalTrackRow(
-                track = track,
-                liked = liked.contains(track.id),
-                onTrack = onTrack,
-                onToggleLike = { onToggleLike(track.id) },
-                onAddToPlaylist = { onAddToPlaylist(track) },
-                onPlayNext = { onPlayNext(track) }
-            )
-        }
     }
 }
 
 @Composable
-private fun SonifySearchScreen(
+private fun SearchScreen(
     liked: List<String>,
     onTrack: (Track) -> Unit,
     onCategory: (String) -> Unit,
@@ -632,33 +572,35 @@ private fun SonifySearchScreen(
     val results = remember(query) { DemoCatalog.search(query) }
 
     LazyColumn(
-        Modifier.fillMaxSize().background(SonifyBg),
+        Modifier.fillMaxSize().background(Bg),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp)
     ) {
         item {
-            Text("Search", color = SonifyText, fontSize = 34.sp, fontWeight = FontWeight.Black)
+            Text("Search", color = Text, fontSize = 34.sp, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(16.dp))
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                placeholder = { Text("Songs, artists, playlists, moods…", color = SonifyMuted) },
-                leadingIcon = { Icon(Icons.Rounded.Search, null, tint = SonifyMuted) },
+                placeholder = { Text("Songs, artists, playlists, moods…", color = Muted) },
+                leadingIcon = { Icon(Icons.Rounded.Search, null, tint = Muted) },
                 trailingIcon = {
                     if (query.isNotBlank()) {
-                        IconButton(onClick = { query = "" }) { Icon(Icons.Rounded.Close, null, tint = SonifyMuted) }
+                        IconButton(onClick = { query = "" }) {
+                            Icon(Icons.Rounded.Close, null, tint = Muted)
+                        }
                     }
                 },
                 shape = RoundedCornerShape(18.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = SonifySurface2,
-                    unfocusedContainerColor = SonifySurface2,
-                    focusedBorderColor = SonifyAccent,
+                    focusedContainerColor = Surface2,
+                    unfocusedContainerColor = Surface2,
+                    focusedBorderColor = Accent,
                     unfocusedBorderColor = Color.Transparent,
-                    focusedTextColor = SonifyText,
-                    unfocusedTextColor = SonifyText,
-                    cursorColor = SonifyAccent
+                    focusedTextColor = Text,
+                    unfocusedTextColor = Text,
+                    cursorColor = Accent
                 )
             )
             Spacer(Modifier.height(22.dp))
@@ -666,36 +608,30 @@ private fun SonifySearchScreen(
 
         if (query.isBlank()) {
             item {
-                Text("Browse all", color = SonifyText, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                Text("Browse all", color = Text, fontSize = 22.sp, fontWeight = FontWeight.Black)
                 Spacer(Modifier.height(14.dp))
             }
-            items(sonifyCategories.chunked(2)) { row ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(categories.chunked(2)) { row ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     row.forEach { category ->
-                        Box(
-                            Modifier.weight(1f).height(104.dp)
-                                .clip(RoundedCornerShape(18.dp))
-                                .clickable { onCategory(category.id) }
-                        ) {
-                            SonifyArtworkUrl(category.artworkUrl, Modifier.fillMaxSize())
-                            Box(Modifier.fillMaxSize().background(Color(0x66000000)))
-                            Text(
-                                category.title,
-                                color = SonifyText,
-                                fontWeight = FontWeight.Black,
-                                fontSize = 18.sp,
-                                modifier = Modifier.align(Alignment.BottomStart).padding(14.dp)
-                            )
-                        }
+                        CategoryBrowseCard(
+                            category = category,
+                            modifier = Modifier.weight(1f),
+                            onClick = { onCategory(category.id) }
+                        )
                     }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(12.dp))
             }
         } else if (results.isEmpty()) {
-            item { SonifyEmptyState("No preview tracks found", "Live catalog search will replace the preview catalog.") }
+            item { EmptyState("No preview tracks found", "Live catalog search comes next.") }
         } else {
             items(results, key = { it.id }) { track ->
-                SonifyFunctionalTrackRow(
+                FunctionalTrackRow(
                     track = track,
                     liked = liked.contains(track.id),
                     onTrack = onTrack,
@@ -709,52 +645,70 @@ private fun SonifySearchScreen(
 }
 
 @Composable
-private fun SonifyLibraryScreen(
+private fun LibraryScreen(
     likedCount: Int,
     playlistCount: Int,
     onLiked: () -> Unit,
     onPlaylists: () -> Unit
 ) {
     LazyColumn(
-        Modifier.fillMaxSize().background(SonifyBg),
+        Modifier.fillMaxSize().background(Bg),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp)
     ) {
         item {
-            Text("Your Library", color = SonifyText, fontSize = 34.sp, fontWeight = FontWeight.Black)
+            Text("Your Library", color = Text, fontSize = 34.sp, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(5.dp))
-            Text("Saved music and playlists", color = SonifyMuted)
+            Text("Saved music and playlists", color = Muted)
             Spacer(Modifier.height(22.dp))
-            SonifyLibraryRow(Icons.Rounded.Favorite, "Liked Songs", "$likedCount saved tracks", onLiked)
-            SonifyLibraryRow(Icons.Rounded.QueueMusic, "Playlists", "$playlistCount playlists", onPlaylists)
+            LibraryNavRow(Icons.Rounded.Favorite, "Liked Songs", "$likedCount saved tracks", onLiked)
+            LibraryNavRow(Icons.Rounded.QueueMusic, "Playlists", "$playlistCount playlists", onPlaylists)
         }
     }
 }
 
 @Composable
-private fun SonifyLibraryRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit
+private fun CategoryScreen(
+    category: Category,
+    liked: List<String>,
+    onBack: () -> Unit,
+    onTrack: (Track) -> Unit,
+    onToggleLike: (String) -> Unit,
+    onAddToPlaylist: (Track) -> Unit,
+    onPlayNext: (Track) -> Unit
 ) {
-    Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+    val tracks = category.trackIds.mapNotNull { id ->
+        DemoCatalog.allTracks.firstOrNull { it.id == id }
+    }
+
+    LazyColumn(
+        Modifier.fillMaxSize().background(Bg),
+        contentPadding = PaddingValues(bottom = 96.dp)
     ) {
-        Box(Modifier.size(62.dp).clip(RoundedCornerShape(18.dp)).background(SonifySurface2), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = SonifyAccent, modifier = Modifier.size(28.dp))
+        item {
+            DetailHeader(category.title, category.subtitle, onBack)
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                ArtworkUrl(
+                    category.artworkUrl,
+                    Modifier.size(220.dp).clip(RoundedCornerShape(28.dp))
+                )
+            }
+            Spacer(Modifier.height(16.dp))
         }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, color = SonifyText, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-            Text(subtitle, color = SonifyMuted, fontSize = 13.sp)
+        items(tracks, key = { it.id }) { track ->
+            FunctionalTrackRow(
+                track = track,
+                liked = liked.contains(track.id),
+                onTrack = onTrack,
+                onToggleLike = { onToggleLike(track.id) },
+                onAddToPlaylist = { onAddToPlaylist(track) },
+                onPlayNext = { onPlayNext(track) }
+            )
         }
-        Icon(Icons.Rounded.ChevronRight, null, tint = SonifyMuted)
     }
 }
 
 @Composable
-private fun SonifyLikedScreen(
+private fun LikedScreen(
     liked: List<String>,
     onBack: () -> Unit,
     onTrack: (Track) -> Unit,
@@ -763,13 +717,16 @@ private fun SonifyLikedScreen(
     onPlayNext: (Track) -> Unit
 ) {
     val tracks = DemoCatalog.allTracks.filter { it.id in liked }
-    LazyColumn(Modifier.fillMaxSize().background(SonifyBg), contentPadding = PaddingValues(bottom = 24.dp)) {
-        item { SonifyDetailHeader("Liked Songs", "${tracks.size} tracks", onBack) }
+    LazyColumn(
+        Modifier.fillMaxSize().background(Bg),
+        contentPadding = PaddingValues(bottom = 96.dp)
+    ) {
+        item { DetailHeader("Liked Songs", "${tracks.size} tracks", onBack) }
         if (tracks.isEmpty()) {
-            item { SonifyEmptyState("No liked songs yet", "Tap the heart on a song and it will appear here.") }
+            item { EmptyState("No liked songs yet", "Tap the heart on a song and it will appear here.") }
         } else {
             items(tracks, key = { it.id }) { track ->
-                SonifyFunctionalTrackRow(
+                FunctionalTrackRow(
                     track = track,
                     liked = true,
                     onTrack = onTrack,
@@ -783,43 +740,51 @@ private fun SonifyLikedScreen(
 }
 
 @Composable
-private fun SonifyPlaylistsScreen(
-    playlists: List<SonifyPlaylist>,
+private fun PlaylistsScreen(
+    playlists: List<Playlist>,
     onBack: () -> Unit,
     onCreate: () -> Unit,
-    onOpenPlaylist: (String) -> Unit
+    onOpen: (String) -> Unit
 ) {
-    LazyColumn(Modifier.fillMaxSize().background(SonifyBg), contentPadding = PaddingValues(bottom = 24.dp)) {
+    LazyColumn(
+        Modifier.fillMaxSize().background(Bg),
+        contentPadding = PaddingValues(bottom = 96.dp)
+    ) {
         item {
-            SonifyDetailHeader("Playlists", "Your collections", onBack)
+            DetailHeader("Playlists", "Your collections", onBack)
             Row(
-                Modifier.fillMaxWidth().clickable(onClick = onCreate).padding(horizontal = 20.dp, vertical = 12.dp),
+                Modifier.fillMaxWidth().clickable(onClick = onCreate)
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(Modifier.size(58.dp).clip(RoundedCornerShape(16.dp)).background(SonifySurface2), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.Add, null, tint = SonifyAccent)
-                }
+                Box(
+                    Modifier.size(58.dp).clip(RoundedCornerShape(16.dp)).background(Surface2),
+                    contentAlignment = Alignment.Center
+                ) { Icon(Icons.Rounded.Add, null, tint = Accent) }
                 Spacer(Modifier.width(14.dp))
-                Text("Create new playlist", color = SonifyText, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text("Create new playlist", color = Text, fontWeight = FontWeight.Bold, fontSize = 17.sp)
             }
         }
+
         if (playlists.isEmpty()) {
-            item { SonifyEmptyState("No playlists yet", "Create one and add your favorite tracks.") }
+            item { EmptyState("No playlists yet", "Create one and add your favorite tracks.") }
         } else {
             items(playlists, key = { it.id }) { playlist ->
                 Row(
-                    Modifier.fillMaxWidth().clickable { onOpenPlaylist(playlist.id) }.padding(horizontal = 20.dp, vertical = 9.dp),
+                    Modifier.fillMaxWidth().clickable { onOpen(playlist.id) }
+                        .padding(horizontal = 20.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(Modifier.size(62.dp).clip(RoundedCornerShape(18.dp)).background(SonifySurface2), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Rounded.QueueMusic, null, tint = SonifyAccent)
-                    }
+                    Box(
+                        Modifier.size(62.dp).clip(RoundedCornerShape(18.dp)).background(Surface2),
+                        contentAlignment = Alignment.Center
+                    ) { Icon(Icons.Rounded.QueueMusic, null, tint = Accent) }
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(playlist.name, color = SonifyText, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                        Text("${playlist.trackIds.size} tracks", color = SonifyMuted, fontSize = 13.sp)
+                        Text(playlist.name, color = Text, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        Text("${playlist.trackIds.size} tracks", color = Muted, fontSize = 13.sp)
                     }
-                    Icon(Icons.Rounded.ChevronRight, null, tint = SonifyMuted)
+                    Icon(Icons.Rounded.ChevronRight, null, tint = Muted)
                 }
             }
         }
@@ -827,84 +792,406 @@ private fun SonifyPlaylistsScreen(
 }
 
 @Composable
-private fun SonifyPlaylistDetailScreen(
-    playlist: SonifyPlaylist,
+private fun PlaylistDetailScreen(
+    playlist: Playlist,
     onBack: () -> Unit,
     onTrack: (Track) -> Unit,
     onAddSongs: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val tracks = playlist.trackIds.mapNotNull { id -> DemoCatalog.allTracks.firstOrNull { it.id == id } }
-    LazyColumn(Modifier.fillMaxSize().background(SonifyBg), contentPadding = PaddingValues(bottom = 24.dp)) {
+    val tracks = playlist.trackIds.mapNotNull { id ->
+        DemoCatalog.allTracks.firstOrNull { it.id == id }
+    }
+    LazyColumn(
+        Modifier.fillMaxSize().background(Bg),
+        contentPadding = PaddingValues(bottom = 96.dp)
+    ) {
         item {
-            SonifyDetailHeader(playlist.name, "${tracks.size} tracks", onBack)
+            DetailHeader(playlist.name, "${tracks.size} tracks", onBack)
             Row(Modifier.padding(horizontal = 12.dp)) {
                 TextButton(onClick = onAddSongs) {
-                    Icon(Icons.Rounded.Add, null, tint = SonifyAccent)
+                    Icon(Icons.Rounded.Add, null, tint = Accent)
                     Spacer(Modifier.width(6.dp))
-                    Text("Add songs", color = SonifyAccent, fontWeight = FontWeight.Bold)
+                    Text("Add songs", color = Accent)
                 }
+                Spacer(Modifier.weight(1f))
                 TextButton(onClick = onDelete) {
-                    Icon(Icons.Rounded.DeleteOutline, null, tint = SonifyMuted)
+                    Icon(Icons.Rounded.DeleteOutline, null, tint = Muted)
                     Spacer(Modifier.width(6.dp))
-                    Text("Delete", color = SonifyMuted)
+                    Text("Delete", color = Muted)
                 }
             }
         }
         if (tracks.isEmpty()) {
-            item { SonifyEmptyState("This playlist is empty", "Use a song menu and choose Add to playlist.") }
+            item { EmptyState("This playlist is empty", "Use a song menu and choose Add to playlist.") }
         } else {
-            items(tracks, key = { it.id }) { track -> SonifyCompactTrackRow(track, onTrack) }
+            items(tracks, key = { it.id }) { track -> CompactTrackRow(track, onTrack) }
         }
     }
 }
 
 @Composable
-private fun SonifyDetailHeader(title: String, subtitle: String, onBack: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp)) {
-        IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, null, tint = SonifyText) }
-        Spacer(Modifier.height(8.dp))
-        Text(title, color = SonifyText, fontWeight = FontWeight.Black, fontSize = 32.sp, modifier = Modifier.padding(horizontal = 8.dp))
-        Text(subtitle, color = SonifyMuted, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+private fun MorphingPlayer(
+    modifier: Modifier,
+    track: Track,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    isPlaying: Boolean,
+    positionMs: Long,
+    durationMs: Long,
+    liked: Boolean,
+    shuffle: Boolean,
+    repeatMode: Int,
+    onPrevious: () -> Unit,
+    onToggle: () -> Unit,
+    onNext: () -> Unit,
+    onDismiss: () -> Unit,
+    onSeek: (Long) -> Unit,
+    onToggleLike: () -> Unit,
+    onAddToPlaylist: () -> Unit,
+    onQueue: () -> Unit,
+    onToggleShuffle: () -> Unit,
+    onToggleRepeat: () -> Unit
+) {
+    var dragging by remember { mutableStateOf(false) }
+    var dragFraction by remember { mutableFloatStateOf(if (expanded) 1f else 0f) }
+
+    val settledFraction by animateFloatAsState(
+        targetValue = if (expanded) 1f else 0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "playerMorph"
+    )
+    val fraction = if (dragging) dragFraction else settledFraction
+
+    LaunchedEffect(expanded) {
+        if (!dragging) dragFraction = if (expanded) 1f else 0f
+    }
+
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        val miniHeight = 78.dp
+        val horizontalMargin = 8.dp * (1f - fraction)
+        val playerHeight = miniHeight + (maxHeight - miniHeight) * fraction
+        val corner = 18.dp * (1f - fraction)
+        val fullAlpha = ((fraction - 0.32f) / 0.68f).coerceIn(0f, 1f)
+        val miniAlpha = ((0.52f - fraction) / 0.52f).coerceIn(0f, 1f)
+
+        Box(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .padding(horizontal = horizontalMargin)
+                .fillMaxWidth()
+                .height(playerHeight)
+                .clip(RoundedCornerShape(corner))
+                .background(
+                    if (fraction > 0.35f) {
+                        Brush.verticalGradient(listOf(Color(0xFF202812), Bg, Bg))
+                    } else {
+                        Brush.verticalGradient(listOf(Surface1, Surface1))
+                    }
+                )
+                .pointerInput(track.id, expanded) {
+                    detectVerticalDragGestures(
+                        onDragStart = {
+                            dragFraction = settledFraction
+                            dragging = true
+                        },
+                        onVerticalDrag = { change, amount ->
+                            change.consume()
+                            val delta = -amount / size.height.toFloat().coerceAtLeast(1f)
+                            dragFraction = (dragFraction + delta).coerceIn(0f, 1f)
+                        },
+                        onDragCancel = {
+                            val open = dragFraction > 0.5f
+                            dragging = false
+                            onExpandedChange(open)
+                        },
+                        onDragEnd = {
+                            val open = dragFraction > 0.5f
+                            dragging = false
+                            onExpandedChange(open)
+                        }
+                    )
+                }
+        ) {
+            if (fullAlpha > 0.01f) {
+                FullPlayerContent(
+                    modifier = Modifier.fillMaxSize().graphicsLayer { alpha = fullAlpha },
+                    track = track,
+                    isPlaying = isPlaying,
+                    positionMs = positionMs,
+                    durationMs = durationMs,
+                    liked = liked,
+                    shuffle = shuffle,
+                    repeatMode = repeatMode,
+                    onCollapse = { onExpandedChange(false) },
+                    onPrevious = onPrevious,
+                    onToggle = onToggle,
+                    onNext = onNext,
+                    onSeek = onSeek,
+                    onToggleLike = onToggleLike,
+                    onAddToPlaylist = onAddToPlaylist,
+                    onQueue = onQueue,
+                    onToggleShuffle = onToggleShuffle,
+                    onToggleRepeat = onToggleRepeat
+                )
+            }
+
+            if (miniAlpha > 0.01f) {
+                MiniPlayerContent(
+                    modifier = Modifier.fillMaxSize()
+                        .graphicsLayer { alpha = miniAlpha }
+                        .clickable { onExpandedChange(true) },
+                    track = track,
+                    isPlaying = isPlaying,
+                    progress = (positionMs.toFloat() / durationMs.coerceAtLeast(1L).toFloat())
+                        .coerceIn(0f, 1f),
+                    onPrevious = onPrevious,
+                    onToggle = onToggle,
+                    onNext = onNext,
+                    onDismiss = onDismiss
+                )
+            }
+        }
     }
 }
 
 @Composable
-private fun SonifySectionTitle(title: String, subtitle: String) {
-    Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 26.dp, bottom = 13.dp)) {
-        Text(title, color = SonifyText, fontSize = 23.sp, fontWeight = FontWeight.Black)
-        Text(subtitle, color = SonifyMuted, fontSize = 13.sp)
+private fun MiniPlayerContent(
+    modifier: Modifier,
+    track: Track,
+    isPlaying: Boolean,
+    progress: Float,
+    onPrevious: () -> Unit,
+    onToggle: () -> Unit,
+    onNext: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Column(modifier) {
+        LinearProgressIndicator(
+            progress = { progress },
+            modifier = Modifier.fillMaxWidth().height(2.dp),
+            color = Accent,
+            trackColor = Color(0xFF2A2A2A)
+        )
+        Row(
+            Modifier.fillMaxSize().padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Artwork(track, Modifier.size(50.dp).clip(RoundedCornerShape(12.dp)))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(track.title, color = Text, fontWeight = FontWeight.Bold, maxLines = 1)
+                Text(track.artist, color = Muted, fontSize = 12.sp, maxLines = 1)
+            }
+            IconButton(onClick = onPrevious, modifier = Modifier.size(38.dp)) {
+                Icon(Icons.Rounded.SkipPrevious, null, tint = Text)
+            }
+            IconButton(onClick = onToggle, modifier = Modifier.size(40.dp)) {
+                Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, tint = Text)
+            }
+            IconButton(onClick = onNext, modifier = Modifier.size(38.dp)) {
+                Icon(Icons.Rounded.SkipNext, null, tint = Text)
+            }
+            IconButton(onClick = onDismiss, modifier = Modifier.size(34.dp)) {
+                Icon(Icons.Rounded.Close, null, tint = Muted, modifier = Modifier.size(19.dp))
+            }
+        }
     }
 }
 
 @Composable
-private fun SonifyAlbumCard(track: Track, onTrack: (Track) -> Unit) {
-    Column(Modifier.width(154.dp).padding(end = 12.dp).clickable { onTrack(track) }) {
-        SonifyArtwork(track, Modifier.size(142.dp).clip(RoundedCornerShape(20.dp)))
-        Spacer(Modifier.height(10.dp))
-        Text(track.title, color = SonifyText, fontWeight = FontWeight.Bold, maxLines = 1)
-        Text(track.artist, color = SonifyMuted, fontSize = 13.sp, maxLines = 1)
-    }
-}
+private fun FullPlayerContent(
+    modifier: Modifier,
+    track: Track,
+    isPlaying: Boolean,
+    positionMs: Long,
+    durationMs: Long,
+    liked: Boolean,
+    shuffle: Boolean,
+    repeatMode: Int,
+    onCollapse: () -> Unit,
+    onPrevious: () -> Unit,
+    onToggle: () -> Unit,
+    onNext: () -> Unit,
+    onSeek: (Long) -> Unit,
+    onToggleLike: () -> Unit,
+    onAddToPlaylist: () -> Unit,
+    onQueue: () -> Unit,
+    onToggleShuffle: () -> Unit,
+    onToggleRepeat: () -> Unit
+) {
+    val safeDuration = durationMs.coerceAtLeast(1L)
+    val progress = (positionMs.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f)
 
-@Composable
-private fun SonifyCompactTrackRow(track: Track, onTrack: (Track) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clickable { onTrack(track) }.padding(horizontal = 20.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+    Column(
+        modifier.padding(horizontal = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        SonifyArtwork(track, Modifier.size(58.dp).clip(RoundedCornerShape(14.dp)))
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(track.title, color = SonifyText, fontWeight = FontWeight.Bold, maxLines = 1)
-            Text(track.artist, color = SonifyMuted, fontSize = 13.sp, maxLines = 1)
+        Spacer(Modifier.height(10.dp))
+        Box(
+            Modifier.width(44.dp).height(5.dp)
+                .clip(RoundedCornerShape(50))
+                .background(Color(0xFF666666))
+        )
+        Spacer(Modifier.height(6.dp))
+
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onCollapse) {
+                Icon(Icons.Rounded.KeyboardArrowDown, null, tint = Text)
+            }
+            Spacer(Modifier.weight(1f))
+            Text("NOW PLAYING", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = onAddToPlaylist) {
+                Icon(Icons.Rounded.PlaylistAdd, null, tint = Text)
+            }
         }
-        Icon(Icons.Rounded.PlayArrow, null, tint = SonifyMuted)
+
+        Spacer(Modifier.height(14.dp))
+        Artwork(
+            track,
+            Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(28.dp))
+        )
+        Spacer(Modifier.height(24.dp))
+
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    track.title,
+                    color = Text,
+                    fontSize = 27.sp,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(track.artist, color = Muted, fontSize = 16.sp, maxLines = 1)
+            }
+            IconButton(onClick = onToggleLike) {
+                Icon(
+                    if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                    null,
+                    tint = if (liked) Accent else Text
+                )
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+        Slider(
+            value = progress,
+            onValueChange = { onSeek((safeDuration * it).toLong()) },
+            colors = SliderDefaults.colors(
+                thumbColor = Accent,
+                activeTrackColor = Accent,
+                inactiveTrackColor = Surface2
+            )
+        )
+        Row(Modifier.fillMaxWidth()) {
+            Text(formatTime(positionMs), color = Muted, fontSize = 11.sp)
+            Spacer(Modifier.weight(1f))
+            Text(formatTime(safeDuration), color = Muted, fontSize = 11.sp)
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onToggleShuffle) {
+                Icon(Icons.Rounded.Shuffle, null, tint = if (shuffle) Accent else Muted)
+            }
+            IconButton(onClick = onPrevious) {
+                Icon(Icons.Rounded.SkipPrevious, null, tint = Text, modifier = Modifier.size(36.dp))
+            }
+            FilledIconButton(
+                onClick = onToggle,
+                colors = IconButtonDefaults.filledIconButtonColors(containerColor = Text, contentColor = Bg),
+                modifier = Modifier.size(70.dp)
+            ) {
+                Icon(
+                    if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                    null,
+                    modifier = Modifier.size(36.dp)
+                )
+            }
+            IconButton(onClick = onNext) {
+                Icon(Icons.Rounded.SkipNext, null, tint = Text, modifier = Modifier.size(36.dp))
+            }
+            IconButton(onClick = onToggleRepeat) {
+                val tint = if (repeatMode == Player.REPEAT_MODE_OFF) Muted else Accent
+                Icon(
+                    if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                    null,
+                    tint = tint
+                )
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
+                .background(Surface2).clickable(onClick = onQueue).padding(15.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Rounded.QueueMusic, null, tint = Accent)
+            Spacer(Modifier.width(12.dp))
+            Text("Queue", color = Text, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            Icon(Icons.Rounded.ChevronRight, null, tint = Muted)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun QueueSheet(
+    current: Track?,
+    onDismiss: () -> Unit,
+    onTrack: (Track) -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Surface1
+    ) {
+        Text(
+            "Up next",
+            color = Text,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Black,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
+        )
+        LazyColumn(contentPadding = PaddingValues(bottom = 28.dp)) {
+            items(DemoCatalog.allTracks, key = { it.id }) { track ->
+                Row(
+                    Modifier.fillMaxWidth().clickable { onTrack(track) }
+                        .padding(horizontal = 20.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Artwork(track, Modifier.size(50.dp).clip(RoundedCornerShape(12.dp)))
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            track.title,
+                            color = if (current?.id == track.id) Accent else Text,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
+                        )
+                        Text(track.artist, color = Muted, fontSize = 12.sp)
+                    }
+                    if (current?.id == track.id) {
+                        Icon(Icons.Rounded.GraphicEq, null, tint = Accent)
+                    }
+                }
+            }
+        }
     }
 }
 
 @Composable
-private fun SonifyFunctionalTrackRow(
+private fun FunctionalTrackRow(
     track: Track,
     liked: Boolean,
     onTrack: (Track) -> Unit,
@@ -914,20 +1201,27 @@ private fun SonifyFunctionalTrackRow(
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Row(
-        Modifier.fillMaxWidth().clickable { onTrack(track) }.padding(horizontal = 20.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().clickable { onTrack(track) }
+            .padding(horizontal = 20.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        SonifyArtwork(track, Modifier.size(58.dp).clip(RoundedCornerShape(14.dp)))
+        Artwork(track, Modifier.size(58.dp).clip(RoundedCornerShape(14.dp)))
         Spacer(Modifier.width(13.dp))
         Column(Modifier.weight(1f)) {
-            Text(track.title, color = SonifyText, fontWeight = FontWeight.Bold, maxLines = 1)
-            Text(track.artist, color = SonifyMuted, fontSize = 13.sp, maxLines = 1)
+            Text(track.title, color = Text, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(track.artist, color = Muted, fontSize = 13.sp, maxLines = 1)
         }
         IconButton(onClick = onToggleLike) {
-            Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, null, tint = if (liked) SonifyAccent else SonifyMuted)
+            Icon(
+                if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                null,
+                tint = if (liked) Accent else Muted
+            )
         }
         Box {
-            IconButton(onClick = { menuOpen = true }) { Icon(Icons.Rounded.MoreVert, null, tint = SonifyMuted) }
+            IconButton(onClick = { menuOpen = true }) {
+                Icon(Icons.Rounded.MoreVert, null, tint = Muted)
+            }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 DropdownMenuItem(
                     text = { Text("Play next") },
@@ -951,224 +1245,169 @@ private fun SonifyFunctionalTrackRow(
 }
 
 @Composable
-private fun SonifyMiniPlayer(
-    track: Track,
-    isPlaying: Boolean,
-    progress: Float,
-    onOpen: () -> Unit,
-    onToggle: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    Surface(
-        color = Color(0xFF181818),
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 7.dp, vertical = 4.dp)
-    ) {
-        Column {
-            Row(
-                Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(start = 7.dp, end = 3.dp, top = 7.dp, bottom = 7.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                SonifyArtwork(track, Modifier.size(44.dp).clip(RoundedCornerShape(9.dp)))
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(track.title, color = SonifyText, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(track.artist, color = SonifyMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                IconButton(onClick = onToggle, modifier = Modifier.size(42.dp)) {
-                    Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, tint = SonifyText)
-                }
-                IconButton(onClick = onDismiss, modifier = Modifier.size(40.dp)) {
-                    Icon(Icons.Rounded.Close, null, tint = SonifyMuted)
-                }
-            }
-            LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier.fillMaxWidth().height(2.dp),
-                color = SonifyAccent,
-                trackColor = Color(0xFF2A2A2A)
-            )
-        }
+private fun CategoryCard(category: Category, onClick: () -> Unit) {
+    Column(Modifier.width(154.dp).clickable(onClick = onClick)) {
+        ArtworkUrl(
+            category.artworkUrl,
+            Modifier.size(154.dp).clip(RoundedCornerShape(22.dp))
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(category.title, color = Text, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 1)
+        Text(
+            category.subtitle,
+            color = Muted,
+            fontSize = 12.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
 @Composable
-private fun SonifyNowPlaying(
-    track: Track,
-    isPlaying: Boolean,
-    positionMs: Long,
-    durationMs: Long,
-    liked: Boolean,
-    shuffle: Boolean,
-    repeatMode: Int,
-    onCollapse: () -> Unit,
-    onPrevious: () -> Unit,
-    onToggle: () -> Unit,
-    onNext: () -> Unit,
-    onSeek: (Long) -> Unit,
-    onToggleLike: () -> Unit,
-    onAddToPlaylist: () -> Unit,
-    onQueue: () -> Unit,
-    onToggleShuffle: () -> Unit,
-    onToggleRepeat: () -> Unit
-) {
-    var dragY by remember { mutableFloatStateOf(0f) }
-    val safeDuration = durationMs.coerceAtLeast(1L)
-    val progress = (positionMs.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f)
-
-    Surface(
-        modifier = Modifier.fillMaxSize()
-            .graphicsLayer {
-                translationY = dragY
-                alpha = 1f - (dragY / 2200f).coerceIn(0f, 0.22f)
-            }
-            .pointerInput(Unit) {
-                detectVerticalDragGestures(
-                    onDragStart = { dragY = 0f },
-                    onVerticalDrag = { _, amount -> dragY = (dragY + amount).coerceAtLeast(0f) },
-                    onDragCancel = { dragY = 0f },
-                    onDragEnd = {
-                        if (dragY > 180f) onCollapse()
-                        dragY = 0f
-                    }
-                )
-            },
-        color = SonifyBg
+private fun CategoryBrowseCard(category: Category, modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier.height(100.dp).clip(RoundedCornerShape(18.dp))
+            .background(Surface2).clickable(onClick = onClick)
     ) {
-        Column(
-            Modifier.fillMaxSize()
-                .background(Brush.verticalGradient(listOf(Color(0xFF242D15), SonifyBg, SonifyBg)))
-                .padding(horizontal = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Spacer(Modifier.height(10.dp))
-            Box(Modifier.width(42.dp).height(5.dp).clip(RoundedCornerShape(50)).background(Color(0xFF6A6A6A)))
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onCollapse) { Icon(Icons.Rounded.KeyboardArrowDown, null, tint = SonifyText) }
-                Spacer(Modifier.weight(1f))
-                Text("NOW PLAYING", color = SonifyMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = onAddToPlaylist) { Icon(Icons.Rounded.PlaylistAdd, null, tint = SonifyText) }
-            }
-            Spacer(Modifier.height(18.dp))
-            SonifyArtwork(track, Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(30.dp)))
-            Spacer(Modifier.height(24.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(track.title, color = SonifyText, fontSize = 27.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(track.artist, color = SonifyMuted, fontSize = 16.sp, maxLines = 1)
-                }
-                IconButton(onClick = onToggleLike) {
-                    Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, null, tint = if (liked) SonifyAccent else SonifyText)
-                }
-            }
-            Spacer(Modifier.height(18.dp))
-            Slider(
-                value = progress,
-                onValueChange = { onSeek((safeDuration * it).toLong()) },
-                colors = SliderDefaults.colors(thumbColor = SonifyAccent, activeTrackColor = SonifyAccent, inactiveTrackColor = SonifySurface2)
-            )
-            Row(Modifier.fillMaxWidth()) {
-                Text(sonifyTime(positionMs), color = SonifyMuted, fontSize = 11.sp)
-                Spacer(Modifier.weight(1f))
-                Text(sonifyTime(safeDuration), color = SonifyMuted, fontSize = 11.sp)
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onToggleShuffle) { Icon(Icons.Rounded.Shuffle, null, tint = if (shuffle) SonifyAccent else SonifyMuted) }
-                IconButton(onClick = onPrevious) { Icon(Icons.Rounded.SkipPrevious, null, tint = SonifyText, modifier = Modifier.size(36.dp)) }
-                FilledIconButton(
-                    onClick = onToggle,
-                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = SonifyText, contentColor = SonifyBg),
-                    modifier = Modifier.size(70.dp)
-                ) {
-                    Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, modifier = Modifier.size(36.dp))
-                }
-                IconButton(onClick = onNext) { Icon(Icons.Rounded.SkipNext, null, tint = SonifyText, modifier = Modifier.size(36.dp)) }
-                IconButton(onClick = onToggleRepeat) {
-                    Icon(
-                        if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
-                        null,
-                        tint = if (repeatMode == Player.REPEAT_MODE_OFF) SonifyMuted else SonifyAccent
-                    )
-                }
-            }
-            Spacer(Modifier.height(20.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton(onClick = onQueue) {
-                    Icon(Icons.Rounded.QueueMusic, null, tint = SonifyText)
-                    Spacer(Modifier.width(6.dp))
-                    Text("Queue", color = SonifyText)
-                }
-                TextButton(onClick = onAddToPlaylist) {
-                    Icon(Icons.Rounded.PlaylistAdd, null, tint = SonifyText)
-                    Spacer(Modifier.width(6.dp))
-                    Text("Add to playlist", color = SonifyText)
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SonifyQueueSheet(
-    controller: MediaController?,
-    current: Track?,
-    onDismiss: () -> Unit,
-    onTrack: (Track) -> Unit
-) {
-    val ids = remember(controller, current) {
-        if (controller == null || controller.mediaItemCount == 0) {
-            DemoCatalog.allTracks.map { it.id }
-        } else {
-            (0 until controller.mediaItemCount).map { controller.getMediaItemAt(it).mediaId }
-        }
-    }
-    val tracks = ids.mapNotNull { id -> DemoCatalog.allTracks.firstOrNull { it.id == id } }
-    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = state,
-        containerColor = SonifySurface
-    ) {
-        Text("Play queue", color = SonifyText, fontSize = 24.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp))
-        LazyColumn(contentPadding = PaddingValues(bottom = 28.dp)) {
-            items(tracks, key = { it.id }) { track ->
-                Row(
-                    Modifier.fillMaxWidth().clickable { onTrack(track) }.padding(horizontal = 20.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    SonifyArtwork(track, Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)))
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(track.title, color = if (current?.id == track.id) SonifyAccent else SonifyText, fontWeight = FontWeight.Bold, maxLines = 1)
-                        Text(track.artist, color = SonifyMuted, fontSize = 12.sp, maxLines = 1)
-                    }
-                    if (current?.id == track.id) Icon(Icons.Rounded.GraphicEq, null, tint = SonifyAccent)
-                }
-            }
-        }
+        ArtworkUrl(
+            category.artworkUrl,
+            Modifier.fillMaxSize().graphicsLayer { alpha = 0.35f }
+        )
+        Text(
+            category.title,
+            color = Text,
+            fontWeight = FontWeight.Black,
+            fontSize = 18.sp,
+            modifier = Modifier.align(Alignment.BottomStart).padding(14.dp)
+        )
     }
 }
 
 @Composable
-private fun SonifyCreatePlaylistDialog(onDismiss: () -> Unit, onCreate: (String) -> Unit) {
+private fun LibraryNavRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(62.dp).clip(RoundedCornerShape(18.dp)).background(Surface2),
+            contentAlignment = Alignment.Center
+        ) { Icon(icon, null, tint = Accent, modifier = Modifier.size(28.dp)) }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, color = Text, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Text(subtitle, color = Muted, fontSize = 13.sp)
+        }
+        Icon(Icons.Rounded.ChevronRight, null, tint = Muted)
+    }
+}
+
+@Composable
+private fun DetailHeader(title: String, subtitle: String, onBack: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp)) {
+        IconButton(onClick = onBack) {
+            Icon(Icons.Rounded.ArrowBack, null, tint = Text)
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            title,
+            color = Text,
+            fontWeight = FontWeight.Black,
+            fontSize = 32.sp,
+            modifier = Modifier.padding(horizontal = 8.dp)
+        )
+        Text(
+            subtitle,
+            color = Muted,
+            fontSize = 14.sp,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+        )
+    }
+}
+
+@Composable
+private fun SectionTitle(title: String, subtitle: String) {
+    Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 26.dp, bottom = 13.dp)) {
+        Text(title, color = Text, fontSize = 23.sp, fontWeight = FontWeight.Black)
+        Text(subtitle, color = Muted, fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun EmptyState(title: String, subtitle: String) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 42.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(Icons.Rounded.MusicNote, null, tint = Muted, modifier = Modifier.size(44.dp))
+        Spacer(Modifier.height(12.dp))
+        Text(title, color = Text, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Spacer(Modifier.height(4.dp))
+        Text(subtitle, color = Muted, fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun AlbumCard(track: Track, onTrack: (Track) -> Unit) {
+    Column(Modifier.width(154.dp).padding(end = 12.dp).clickable { onTrack(track) }) {
+        Artwork(track, Modifier.size(142.dp).clip(RoundedCornerShape(20.dp)))
+        Spacer(Modifier.height(10.dp))
+        Text(track.title, color = Text, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(track.artist, color = Muted, fontSize = 13.sp, maxLines = 1)
+    }
+}
+
+@Composable
+private fun CompactTrackRow(track: Track, onTrack: (Track) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable { onTrack(track) }
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Artwork(track, Modifier.size(58.dp).clip(RoundedCornerShape(14.dp)))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(track.title, color = Text, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(track.artist, color = Muted, fontSize = 13.sp, maxLines = 1)
+        }
+        Icon(Icons.Rounded.ChevronRight, null, tint = Muted)
+    }
+}
+
+@Composable
+private fun CreatePlaylistDialog(onDismiss: () -> Unit, onCreate: (String) -> Unit) {
     var name by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("New playlist") },
-        text = { OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, placeholder = { Text("Playlist name") }) },
-        confirmButton = { TextButton(onClick = { onCreate(name) }, enabled = name.isNotBlank()) { Text("Create") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                singleLine = true,
+                placeholder = { Text("Playlist name") }
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onCreate(name) }, enabled = name.isNotBlank()) {
+                Text("Create")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
     )
 }
 
 @Composable
-private fun SonifyAddToPlaylistDialog(
+private fun AddToPlaylistDialog(
     track: Track,
-    playlists: List<SonifyPlaylist>,
+    playlists: List<Playlist>,
     onDismiss: () -> Unit,
     onCreatePlaylist: () -> Unit,
     onAdd: (String) -> Unit
@@ -1178,14 +1417,15 @@ private fun SonifyAddToPlaylistDialog(
         title = { Text("Add to playlist") },
         text = {
             Column {
-                Text(track.title, color = SonifyMuted)
+                Text(track.title, color = Muted)
                 Spacer(Modifier.height(12.dp))
                 if (playlists.isEmpty()) {
                     Text("You don't have a playlist yet.")
                 } else {
                     playlists.forEach { playlist ->
                         Row(
-                            Modifier.fillMaxWidth().clickable { onAdd(playlist.id) }.padding(vertical = 10.dp),
+                            Modifier.fillMaxWidth().clickable { onAdd(playlist.id) }
+                                .padding(vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(Icons.Rounded.QueueMusic, null)
@@ -1196,70 +1436,65 @@ private fun SonifyAddToPlaylistDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onCreatePlaylist) { Text("New playlist") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        confirmButton = {
+            TextButton(onClick = onCreatePlaylist) { Text("New playlist") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
     )
 }
 
 @Composable
-private fun SonifyArtwork(track: Track, modifier: Modifier) {
-    SonifyArtworkUrl(track.artworkUrl, modifier)
+private fun Artwork(track: Track, modifier: Modifier) {
+    ArtworkUrl(track.artworkUrl, modifier)
 }
 
 @Composable
-private fun SonifyArtworkUrl(url: String, modifier: Modifier) {
+private fun ArtworkUrl(url: String, modifier: Modifier) {
     val context = LocalContext.current
     AsyncImage(
-        model = remember(url) { ImageRequest.Builder(context).data(url).crossfade(false).build() },
+        model = remember(url) {
+            ImageRequest.Builder(context).data(url).crossfade(false).build()
+        },
         contentDescription = null,
         contentScale = ContentScale.Crop,
-        modifier = modifier.background(SonifySurface2)
+        modifier = modifier.background(Surface2)
     )
 }
 
-@Composable
-private fun SonifyEmptyState(title: String, subtitle: String) {
-    Column(
-        Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 42.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Icon(Icons.Rounded.MusicNote, null, tint = SonifyMuted, modifier = Modifier.size(44.dp))
-        Spacer(Modifier.height(12.dp))
-        Text(title, color = SonifyText, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-        Spacer(Modifier.height(4.dp))
-        Text(subtitle, color = SonifyMuted, fontSize = 13.sp)
-    }
-}
-
-private fun sonifyTime(ms: Long): String {
+private fun formatTime(ms: Long): String {
     val total = (ms.coerceAtLeast(0L) / 1000L).toInt()
-    return "%d:%02d".format(total / 60, total % 60)
+    return "${total / 60}:${(total % 60).toString().padStart(2, '0')}"
 }
 
-private fun loadSonifyLiked(context: Context): Set<String> =
+private fun loadLiked(context: Context): Set<String> =
     context.getSharedPreferences("sonify", Context.MODE_PRIVATE)
         .getStringSet("liked", emptySet())?.toSet() ?: emptySet()
 
-private fun saveSonifyLiked(context: Context, liked: List<String>) {
+private fun saveLiked(context: Context, liked: List<String>) {
     context.getSharedPreferences("sonify", Context.MODE_PRIVATE)
         .edit().putStringSet("liked", liked.toSet()).apply()
 }
 
-private fun loadSonifyPlaylists(context: Context): List<SonifyPlaylist> {
+private fun loadPlaylists(context: Context): List<Playlist> {
     val raw = context.getSharedPreferences("sonify", Context.MODE_PRIVATE)
         .getStringSet("playlists", emptySet()) ?: emptySet()
+
     return raw.mapNotNull { entry ->
         val parts = entry.split("|", limit = 3)
         if (parts.size < 2) return@mapNotNull null
         val ids = parts.getOrNull(2)?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
-        SonifyPlaylist(parts[0], parts[1], ids)
+        Playlist(parts[0], parts[1], ids)
     }.sortedBy { it.name.lowercase() }
 }
 
-private fun saveSonifyPlaylists(context: Context, playlists: List<SonifyPlaylist>) {
+private fun savePlaylists(context: Context, playlists: List<Playlist>) {
     val raw = playlists.map { playlist ->
-        "${playlist.id}|${playlist.name.replace("|", " ")}|${playlist.trackIds.joinToString(",")}" 
+        val cleanName = playlist.name.replace("|", " ")
+        "${playlist.id}|$cleanName|${playlist.trackIds.joinToString(",")}" 
     }.toSet()
+
     context.getSharedPreferences("sonify", Context.MODE_PRIVATE)
         .edit().putStringSet("playlists", raw).apply()
 }
