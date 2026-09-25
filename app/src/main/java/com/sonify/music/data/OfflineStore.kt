@@ -1,6 +1,7 @@
 package com.sonify.music.data
 
 import android.content.Context
+import android.net.Uri
 import com.sonify.music.model.Track
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -26,14 +27,20 @@ object OfflineStore {
         .followSslRedirects(true)
         .build()
 
+    private fun localFile(uri: String): File? {
+        if (!uri.startsWith("file:")) return null
+        val path = Uri.parse(uri).path ?: return null
+        return File(path)
+    }
+
     fun isDownloaded(context: Context, id: String): Boolean =
-        readIndex(context).any { it.id == id && File(it.streamUrl.removePrefix("file://")).exists() }
+        readIndex(context).any { it.id == id && localFile(it.streamUrl)?.exists() == true }
 
     fun resolve(context: Context, track: Track): Track =
-        readIndex(context).firstOrNull { it.id == track.id && File(it.streamUrl.removePrefix("file://")).exists() } ?: track
+        readIndex(context).firstOrNull { it.id == track.id && localFile(it.streamUrl)?.exists() == true } ?: track
 
     fun allDownloaded(context: Context): List<Track> =
-        readIndex(context).filter { File(it.streamUrl.removePrefix("file://")).exists() }
+        readIndex(context).filter { localFile(it.streamUrl)?.exists() == true }
 
     suspend fun download(context: Context, track: Track): Result<Track> = withContext(Dispatchers.IO) {
         runCatching {
@@ -73,7 +80,7 @@ object OfflineStore {
 
     fun remove(context: Context, id: String) {
         val current = readIndex(context)
-        current.firstOrNull { it.id == id }?.streamUrl?.removePrefix("file://")?.let { File(it).delete() }
+        current.firstOrNull { it.id == id }?.streamUrl?.let { localFile(it)?.delete() }
         writeIndex(context, current.filterNot { it.id == id })
     }
 
@@ -94,7 +101,7 @@ object OfflineStore {
                         durationMs = o.optLong("durationMs", 0L),
                         downloadable = true
                     )
-                    if (track.id.isNotBlank() && track.streamUrl.startsWith("file:")) add(track)
+                    if (track.id.isNotBlank() && localFile(track.streamUrl)?.exists() == true) add(track)
                 }
             }
         }.getOrDefault(emptyList())
