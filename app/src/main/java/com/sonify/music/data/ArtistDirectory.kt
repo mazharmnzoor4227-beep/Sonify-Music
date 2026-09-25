@@ -33,7 +33,12 @@ object ArtistDirectory {
         ArtistProfile("kaifi-khalil", "Kaifi Khalil", "Pakistan", "Kaifi Khalil"),
         ArtistProfile("young-stunners", "Young Stunners", "Pakistan", "Young Stunners"),
         ArtistProfile("maanu", "Maanu", "Pakistan", "Maanu (singer)", "Maanu Pakistan"),
-        ArtistProfile("annural-khalid", "Annural Khalid", "Pakistan", "Annural Khalid")
+        ArtistProfile("annural-khalid", "Annural Khalid", "Pakistan", "Annural Khalid"),
+        ArtistProfile("ali-sethi", "Ali Sethi", "Pakistan", "Ali Sethi"),
+        ArtistProfile("shae-gill", "Shae Gill", "Pakistan", "Shae Gill"),
+        ArtistProfile("asim-azhar", "Asim Azhar", "Pakistan", "Asim Azhar"),
+        ArtistProfile("momina-mustehsan", "Momina Mustehsan", "Pakistan", "Momina Mustehsan"),
+        ArtistProfile("jasleen-royal", "Jasleen Royal", "India", "Jasleen Royal")
     )
 
     private val client = OkHttpClient.Builder()
