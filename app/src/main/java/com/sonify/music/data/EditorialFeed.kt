@@ -13,8 +13,17 @@ data class EditorialSong(
     val title: String,
     val artist: String,
     val query: String,
-    val artistId: String
-)
+    val artistId: String,
+    val videoId: String = "",
+    val channelName: String = "",
+    val official: Boolean = true
+) {
+    val thumbnailUrl: String
+        get() = if (videoId.isBlank()) "" else "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
+
+    val youtubeUrl: String
+        get() = if (videoId.isBlank()) "" else "https://www.youtube.com/watch?v=$videoId"
+}
 
 data class EditorialSection(
     val id: String,
@@ -29,8 +38,8 @@ object EditorialFeed {
     private const val KEY_JSON = "cached_json"
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
@@ -41,7 +50,7 @@ object EditorialFeed {
                 .url(URL)
                 .header("Accept", "application/json")
                 .header("Cache-Control", "no-cache")
-                .header("User-Agent", "SonifyMusic/1.0")
+                .header("User-Agent", "SonifyMusic/1.2")
                 .build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) error("Editorial HTTP ${response.code}")
@@ -74,9 +83,19 @@ object EditorialFeed {
                             val x = songsArray.optJSONObject(j) ?: continue
                             val title = x.optString("title").trim()
                             val artist = x.optString("artist").trim()
-                            val query = x.optString("query").trim()
-                            if (title.isBlank() || artist.isBlank() || query.isBlank()) continue
-                            add(EditorialSong(title, artist, query, x.optString("artistId").trim()))
+                            val videoId = x.optString("videoId").trim()
+                            if (title.isBlank() || artist.isBlank() || videoId.isBlank()) continue
+                            add(
+                                EditorialSong(
+                                    title = title,
+                                    artist = artist,
+                                    query = x.optString("query", "$title $artist").trim(),
+                                    artistId = x.optString("artistId").trim(),
+                                    videoId = videoId,
+                                    channelName = x.optString("channelName").trim(),
+                                    official = x.optBoolean("official", true)
+                                )
+                            )
                         }
                     }
                     if (songs.isNotEmpty()) {
@@ -94,27 +113,43 @@ object EditorialFeed {
         }.getOrDefault(emptyList())
     }
 
+    fun search(sections: List<EditorialSection>, query: String): List<EditorialSong> {
+        val q = query.trim()
+        if (q.isBlank()) return emptyList()
+        return sections.flatMap { it.songs }
+            .distinctBy { it.videoId }
+            .filter {
+                it.title.contains(q, ignoreCase = true) ||
+                    it.artist.contains(q, ignoreCase = true) ||
+                    it.channelName.contains(q, ignoreCase = true)
+            }
+    }
+
     private val fallback = listOf(
         EditorialSection(
-            "pakistan-popular",
-            "Popular in Pakistan",
-            "Pakistani hits and OST discovery",
+            "pakistan-official",
+            "Official Pakistan",
+            "Verified official releases and Coke Studio Pakistan",
             listOf(
-                EditorialSong("Jhol", "Maanu & Annural Khalid", "Jhol Maanu Annural Khalid", "maanu"),
-                EditorialSong("Tu Hai Kahan", "AUR", "Tu Hai Kahan AUR", "aur"),
-                EditorialSong("Chal Diye Tum Kahan", "AUR", "Chal Diye Tum Kahan AUR", "aur"),
-                EditorialSong("Kahani Suno 2.0", "Kaifi Khalil", "Kahani Suno 2.0 Kaifi Khalil", "kaifi-khalil")
+                EditorialSong("Jhol", "Maanu & Annural Khalid", "Jhol Maanu Annural Khalid", "maanu", "-2RAq5o5pwc", "Coke Studio Pakistan"),
+                EditorialSong("Pasoori", "Ali Sethi & Shae Gill", "Pasoori Ali Sethi Shae Gill", "ali-sethi", "5Eqb_-j3FDA", "Coke Studio Pakistan"),
+                EditorialSong("Kana Yaari", "Kaifi Khalil x Eva B x Abdul Wahab Bugti", "Kana Yaari Kaifi Khalil", "kaifi-khalil", "zQDAi8tI-cU", "Coke Studio Pakistan"),
+                EditorialSong("Tajdar-e-Haram", "Atif Aslam", "Tajdar e Haram Atif Aslam", "atif-aslam", "a18py61_F_w", "Coke Studio Pakistan"),
+                EditorialSong("Blockbuster", "Faris Shafi x Umair Butt x Gharwi Group", "Blockbuster Coke Studio Pakistan", "", "-urTPhh7gNk", "Coke Studio Pakistan"),
+                EditorialSong("Aayi Aayi", "Noman Ali Rajper x Babar Mangi x Marvi Saiban", "Aayi Aayi Coke Studio Pakistan", "", "0SkXKAY5rRQ", "Coke Studio Pakistan"),
+                EditorialSong("Iraaday", "Abdul Hannan & Rovalio", "Iraaday Abdul Hannan Rovalio", "abdul-hannan", "Qwm6BSGrOq0", "Abdul Hannan"),
+                EditorialSong("Bikhra", "Rovalio & Abdul Hannan", "Bikhra Abdul Hannan Rovalio", "abdul-hannan", "aRzbHxJZSTo", "Rovalio")
             )
         ),
         EditorialSection(
-            "india-popular",
-            "Popular in India",
-            "Bollywood and Hindi favorites",
+            "india-official",
+            "Official India",
+            "Verified label releases",
             listOf(
-                EditorialSong("Tum Hi Ho", "Arijit Singh", "Tum Hi Ho Arijit Singh", "arijit-singh"),
-                EditorialSong("Channa Mereya", "Arijit Singh", "Channa Mereya Arijit Singh", "arijit-singh"),
-                EditorialSong("Kesariya", "Arijit Singh", "Kesariya Arijit Singh", "arijit-singh"),
-                EditorialSong("O Maahi", "Arijit Singh", "O Maahi Arijit Singh", "arijit-singh")
+                EditorialSong("Channa Mereya", "Arijit Singh", "Channa Mereya Arijit Singh", "arijit-singh", "jglVv0JfZUc", "Sony Music India"),
+                EditorialSong("Kesariya", "Arijit Singh", "Kesariya Arijit Singh", "arijit-singh", "BddP6PYo2gs", "Sony Music India"),
+                EditorialSong("O Maahi", "Arijit Singh", "O Maahi Arijit Singh", "arijit-singh", "Etkd-07gnxM", "T-Series"),
+                EditorialSong("Apna Bana Le", "Arijit Singh", "Apna Bana Le Arijit Singh", "arijit-singh", "ElZfdU54Cp8", "Zee Music Company")
             )
         )
     )
