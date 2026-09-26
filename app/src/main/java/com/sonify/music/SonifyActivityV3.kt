@@ -2,16 +2,12 @@ package com.sonify.music
 
 import android.Manifest
 import android.content.ComponentName
-import android.content.Intent
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
-import android.webkit.WebChromeClient
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -50,7 +46,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -93,7 +88,6 @@ private sealed interface V3Screen {
     data class PlaylistDetail(val id: String) : V3Screen
     data class Artist(val id: String) : V3Screen
     data class Editorial(val title: String, val query: String) : V3Screen
-    data class OfficialVideo(val videoId: String, val title: String, val artist: String, val channel: String) : V3Screen
     data object Downloads : V3Screen
 }
 
@@ -351,7 +345,7 @@ private fun SonifyV3Root(controller: MediaController?) {
             playerExpanded -> playerExpanded = false
             screen is V3Screen.PlaylistDetail -> screen = V3Screen.Playlists
             screen is V3Screen.Playlists || screen is V3Screen.Liked || screen is V3Screen.Downloads -> screen = V3Screen.Library
-            screen is V3Screen.Category || screen is V3Screen.Artist || screen is V3Screen.Editorial || screen is V3Screen.OfficialVideo -> screen = V3Screen.Home
+            screen is V3Screen.Category || screen is V3Screen.Artist || screen is V3Screen.Editorial -> screen = V3Screen.Home
             screen is V3Screen.Search || screen is V3Screen.Library -> screen = V3Screen.Home
         }
     }
@@ -420,10 +414,7 @@ private fun SonifyV3Root(controller: MediaController?) {
                                 onArtist = { screen = V3Screen.Artist(it) },
                                 onSearch = { screen = V3Screen.Search },
                                 onEditorial = { song ->
-                                    if (song.videoId.isNotBlank()) {
-                                        dismissPlayer()
-                                        screen = V3Screen.OfficialVideo(song.videoId, song.title, song.artist, song.channelName)
-                                    }
+                                    screen = V3Screen.Editorial(song.title, song.query)
                                 }
                             )
                             V3Screen.Search -> V3SearchScreen(
@@ -435,8 +426,7 @@ private fun SonifyV3Root(controller: MediaController?) {
                                 onPlayNext = ::playNext,
                                 onArtist = { screen = V3Screen.Artist(it) },
                                 onOfficial = { song ->
-                                    dismissPlayer()
-                                    screen = V3Screen.OfficialVideo(song.videoId, song.title, song.artist, song.channelName)
+                                    screen = V3Screen.Editorial(song.title, song.query)
                                 }
                             )
                             V3Screen.Library -> V3LibraryScreen(
@@ -502,8 +492,7 @@ private fun SonifyV3Root(controller: MediaController?) {
                                         followed = followedArtists.contains(artist.id),
                                         onToggleFollow = { toggleFollowArtist(artist.id) },
                                         onOfficial = { song ->
-                                            dismissPlayer()
-                                            screen = V3Screen.OfficialVideo(song.videoId, song.title, song.artist, song.channelName)
+                                            screen = V3Screen.Editorial(song.title, song.query)
                                         }
                                     )
                                 }
@@ -517,13 +506,6 @@ private fun SonifyV3Root(controller: MediaController?) {
                                 onToggleLike = ::toggleLike,
                                 onAddToPlaylist = { addTrackDialog = it },
                                 onPlayNext = ::playNext
-                            )
-                            is V3Screen.OfficialVideo -> V3OfficialVideoScreen(
-                                videoId = target.videoId,
-                                title = target.title,
-                                artist = target.artist,
-                                channel = target.channel,
-                                onBack = { screen = V3Screen.Home }
                             )
                             V3Screen.Downloads -> V3DownloadsScreen(
                                 onBack = { screen = V3Screen.Library },
@@ -1220,11 +1202,11 @@ private fun V3EditorialResultsScreen(
         loading = false
     }
     LazyColumn(Modifier.fillMaxSize().background(V3Bg), contentPadding = PaddingValues(bottom = 28.dp)) {
-        item { V3DetailHeader(title, "Popular pick", onBack) }
+        item { V3DetailHeader(title, "Playable audio", onBack) }
         if (loading) {
             item { Row(Modifier.fillMaxWidth().padding(32.dp), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator(color = V3Accent) } }
         } else if (tracks.isEmpty()) {
-            item { V3EmptyState("Full track source not connected yet", "This popular song is in Sonify's live editorial feed, but the current open catalog does not provide a playable copy. Connect a licensed mainstream catalog for full playback.") }
+            item { V3EmptyState("Audio source not available", "This release is listed in Sonify, but the connected music catalog does not currently provide a playable audio stream for it.") }
         } else {
             items(tracks, key = { it.id }) { track ->
                 V3FunctionalTrackRow(
@@ -1310,98 +1292,10 @@ private fun V3ArtistScreen(
                     Column(Modifier.weight(1f)) {
                         Text(song.title, color = V3Text, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1)
                         Text(song.channelName, color = V3Muted, fontSize = 12.sp, maxLines = 1)
-                        Text("Official YouTube release", color = V3Accent, fontSize = 10.sp)
+                        Text("Featured release", color = V3Accent, fontSize = 10.sp)
                     }
                     Icon(Icons.Rounded.PlayCircle, null, tint = V3Text, modifier = Modifier.size(30.dp))
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun V3OfficialVideoScreen(
-    videoId: String,
-    title: String,
-    artist: String,
-    channel: String,
-    onBack: () -> Unit
-) {
-    var webView by remember(videoId) { mutableStateOf<WebView?>(null) }
-    val embedUrl = remember(videoId) {
-        "https://www.youtube.com/embed/$videoId?playsinline=1&rel=0&origin=https%3A%2F%2Fgithub.com"
-    }
-    val headers = remember { mapOf("Referer" to "https://github.com/mazharmnzoor4227-beep/Sonify-Music/") }
-
-    DisposableEffect(videoId) {
-        onDispose {
-            webView?.stopLoading()
-            webView?.loadUrl("about:blank")
-            webView?.destroy()
-            webView = null
-        }
-    }
-
-    LazyColumn(
-        Modifier.fillMaxSize().background(V3Bg),
-        contentPadding = PaddingValues(bottom = 26.dp)
-    ) {
-        item {
-            Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, null, tint = V3Text) }
-                Column(Modifier.weight(1f)) {
-                    Text(title, color = V3Text, fontWeight = FontWeight.Black, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("Official · $channel", color = V3Muted, fontSize = 11.sp, maxLines = 1)
-                }
-            }
-        }
-        item {
-            AndroidView(
-                modifier = Modifier.fillMaxWidth().height(235.dp).background(Color.Black),
-                factory = { ctx ->
-                    WebView(ctx).apply {
-                        webView = this
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.mediaPlaybackRequiresUserGesture = true
-                        settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
-                        settings.setSupportZoom(false)
-                        webViewClient = WebViewClient()
-                        webChromeClient = WebChromeClient()
-                        setBackgroundColor(android.graphics.Color.BLACK)
-                        loadUrl(embedUrl, headers)
-                    }
-                },
-                update = { web ->
-                    webView = web
-                    if (web.url?.contains(videoId) != true) web.loadUrl(embedUrl, headers)
-                }
-            )
-        }
-        item {
-            Column(Modifier.padding(18.dp)) {
-                Text(title, color = V3Text, fontSize = 25.sp, fontWeight = FontWeight.Black)
-                Text(artist, color = V3Muted, fontSize = 15.sp)
-                Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.Verified, null, tint = V3Accent, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Official source · $channel", color = V3Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
-                Spacer(Modifier.height(18.dp))
-                Surface(color = V3Surface2, shape = RoundedCornerShape(14.dp)) {
-                    Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.PlayCircle, null, tint = V3Accent)
-                        Spacer(Modifier.width(10.dp))
-                        Text("Play it above without leaving Sonify", color = V3Text, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-                Spacer(Modifier.height(14.dp))
-                Text(
-                    "Official YouTube playback stays inside Sonify. Offline download is only shown for sources that explicitly permit downloading.",
-                    color = V3Muted,
-                    fontSize = 11.sp
-                )
             }
         }
     }
