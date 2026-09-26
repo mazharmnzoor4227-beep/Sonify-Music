@@ -1,31 +1,102 @@
 {
-  "version": 2,
+  "version": 3,
   "updatedAt": "2026-09-26",
   "sections": [
     {
-      "id": "pakistan-official",
-      "title": "Official Pakistan",
-      "subtitle": "Verified official releases and Coke Studio Pakistan",
+      "id": "pakistan-trending-2026",
+      "title": "Trending in Pakistan",
+      "subtitle": "Current official Pakistani releases",
+      "songs": [
+        {"title":"Dil","artist":"Afusic x Zoha Waseem x Ali Soomro","query":"Dil Coke Studio Nu WAV Afusic Zoha Waseem Ali Soomro","artistId":"","videoId":"e-1zjovjWiA","channelName":"Coke Studio Pakistan","official":true},
+        {"title":"Rangeen","artist":"Hasan Raheem x Izzchughtai x Umair","query":"Rangeen Coke Studio Nu WAV Hasan Raheem Umair","artistId":"","videoId":"yzmr-3OkBZA","channelName":"Coke Studio Pakistan","official":true},
+        {"title":"Jhol","artist":"Maanu & Annural Khalid","query":"Jhol Maanu Annural Khalid","artistId":"maanu","videoId":"-2RAq5o5pwc","channelName":"Coke Studio Pakistan","official":true},
+        {"title":"Tu Hai Kahan","artist":"AUR","query":"Tu Hai Kahan AUR","artistId":"aur","videoId":"AX6OrbgS8lI","channelName":"AUR","official":true},
+        {"title":"Downers At Dusk","artist":"Talha Anjum","query":"Downers At Dusk Talha Anjum","artistId":"young-stunners","videoId":"iWomYr2dlsM","channelName":"Talha Anjum","official":true},
+        {"title":"Kahani Suno 2.0","artist":"Kaifi Khalil","query":"Kahani Suno 2.0 Kaifi Khalil","artistId":"kaifi-khalil","videoId":"_XBVWlI8TsQ","channelName":"Kaifi Khalil","official":true}
+      ]
+    },
+    {
+      "id": "coke-studio-pakistan",
+      "title": "Coke Studio Pakistan",
+      "subtitle": "Official Coke Studio releases",
       "songs": [
         {"title":"Jhol","artist":"Maanu & Annural Khalid","query":"Jhol Maanu Annural Khalid","artistId":"maanu","videoId":"-2RAq5o5pwc","channelName":"Coke Studio Pakistan","official":true},
         {"title":"Pasoori","artist":"Ali Sethi & Shae Gill","query":"Pasoori Ali Sethi Shae Gill","artistId":"ali-sethi","videoId":"5Eqb_-j3FDA","channelName":"Coke Studio Pakistan","official":true},
         {"title":"Kana Yaari","artist":"Kaifi Khalil x Eva B x Abdul Wahab Bugti","query":"Kana Yaari Kaifi Khalil","artistId":"kaifi-khalil","videoId":"zQDAi8tI-cU","channelName":"Coke Studio Pakistan","official":true},
+        {"title":"Tu Jhoom","artist":"Abida Parveen & Naseebo Lal","query":"Tu Jhoom Abida Parveen Naseebo Lal Coke Studio","artistId":"","videoId":"7D4vNcK6D38","channelName":"Coke Studio Pakistan","official":true},
+        {"title":"Phir Milenge","artist":"Faisal Kapadia x Young Stunners","query":"Phir Milenge Coke Studio Young Stunners","artistId":"young-stunners","videoId":"S5FyS7tQuUw","channelName":"Coke Studio Pakistan","official":true},
+        {"title":"Peechay Hutt","artist":"Justin Bibis x Talal Qureshi x Hasan Raheem","query":"Peechay Hutt Coke Studio Pakistan","artistId":"","videoId":"dB0AFSUl2Vk","channelName":"Coke Studio Pakistan","official":true},
         {"title":"Tajdar-e-Haram","artist":"Atif Aslam","query":"Tajdar e Haram Atif Aslam","artistId":"atif-aslam","videoId":"a18py61_F_w","channelName":"Coke Studio Pakistan","official":true},
+        {"title":"Faasle","artist":"Kaavish & Quratulain Balouch","query":"Faasle Coke Studio Pakistan","artistId":"","videoId":"9sekgEXGm-E","channelName":"Coke Studio Pakistan","official":true},
+        {"title":"Sammi Meri Waar","artist":"Umair Jaswal & Quratulain Balouch","query":"Sammi Meri Waar Coke Studio Pakistan","artistId":"","videoId":"KHLNSxe5Y8A","channelName":"Coke Studio Pakistan","official":true},
         {"title":"Blockbuster","artist":"Faris Shafi x Umair Butt x Gharwi Group","query":"Blockbuster Coke Studio Pakistan","artistId":"","videoId":"-urTPhh7gNk","channelName":"Coke Studio Pakistan","official":true},
         {"title":"Aayi Aayi","artist":"Noman Ali Rajper x Babar Mangi x Marvi Saiban","query":"Aayi Aayi Coke Studio Pakistan","artistId":"","videoId":"0SkXKAY5rRQ","channelName":"Coke Studio Pakistan","official":true},
+        {"title":"Dil","artist":"Afusic x Zoha Waseem x Ali Soomro","query":"Dil Coke Studio Nu WAV","artistId":"","videoId":"e-1zjovjWiA","channelName":"Coke Studio Pakistan","official":true},
+        {"title":"Rangeen","artist":"Hasan Raheem x Izzchughtai x Umair","query":"Rangeen Coke Studio Nu WAV","artistId":"","videoId":"yzmr-3OkBZA","channelName":"Coke Studio Pakistan","official":true}
+      ]
+    },
+    {
+      "id": "pakistan-essentials",
+      "title": "Pakistan Essentials",
+      "subtitle": "Official artist and label releases",
+      "songs": [
+        {"title":"Tu Hai Kahan","artist":"AUR","query":"Tu Hai Kahan AUR","artistId":"aur","videoId":"AX6OrbgS8lI","channelName":"AUR","official":true},
+        {"title":"Kahani Suno 2.0","artist":"Kaifi Khalil","query":"Kahani Suno 2.0 Kaifi Khalil","artistId":"kaifi-khalil","videoId":"_XBVWlI8TsQ","channelName":"Kaifi Khalil","official":true},
+        {"title":"Gumaan","artist":"Young Stunners","query":"Gumaan Young Stunners","artistId":"young-stunners","videoId":"jIQ0Dx-4peE","channelName":"Young Stunners","official":true},
+        {"title":"Downers At Dusk","artist":"Talha Anjum","query":"Downers At Dusk Talha Anjum","artistId":"young-stunners","videoId":"iWomYr2dlsM","channelName":"Talha Anjum","official":true},
         {"title":"Iraaday","artist":"Abdul Hannan & Rovalio","query":"Iraaday Abdul Hannan Rovalio","artistId":"abdul-hannan","videoId":"Qwm6BSGrOq0","channelName":"Abdul Hannan","official":true},
-        {"title":"Bikhra","artist":"Rovalio & Abdul Hannan","query":"Bikhra Abdul Hannan Rovalio","artistId":"abdul-hannan","videoId":"aRzbHxJZSTo","channelName":"Rovalio","official":true}
+        {"title":"Bikhra","artist":"Rovalio & Abdul Hannan","query":"Bikhra Abdul Hannan Rovalio","artistId":"abdul-hannan","videoId":"aRzbHxJZSTo","channelName":"Rovalio","official":true},
+        {"title":"Baari","artist":"Bilal Saeed & Momina Mustehsan","query":"Baari Bilal Saeed Momina Mustehsan","artistId":"","videoId":"h18s7zlYOyg","channelName":"One Two Records","official":true},
+        {"title":"Jo Tu Na Mila","artist":"Asim Azhar","query":"Jo Tu Na Mila Asim Azhar","artistId":"asim-azhar","videoId":"6DtPF9W3ejI","channelName":"Universal Music India","official":true}
+      ]
+    },
+    {
+      "id": "arijit-essentials",
+      "title": "Arijit Singh Essentials",
+      "subtitle": "Official videos from major music labels",
+      "songs": [
+        {"title":"Tum Hi Ho","artist":"Arijit Singh","query":"Tum Hi Ho Arijit Singh","artistId":"arijit-singh","videoId":"WWZxDA81JFk","channelName":"T-Series","official":true},
+        {"title":"Channa Mereya","artist":"Arijit Singh","query":"Channa Mereya Arijit Singh","artistId":"arijit-singh","videoId":"jglVv0JfZUc","channelName":"Sony Music India","official":true},
+        {"title":"Kesariya","artist":"Arijit Singh","query":"Kesariya Arijit Singh","artistId":"arijit-singh","videoId":"BddP6PYo2gs","channelName":"Sony Music India","official":true},
+        {"title":"O Maahi","artist":"Arijit Singh","query":"O Maahi Arijit Singh","artistId":"arijit-singh","videoId":"Etkd-07gnxM","channelName":"T-Series","official":true},
+        {"title":"Apna Bana Le","artist":"Arijit Singh","query":"Apna Bana Le Arijit Singh","artistId":"arijit-singh","videoId":"ElZfdU54Cp8","channelName":"Zee Music Company","official":true},
+        {"title":"Agar Tum Saath Ho","artist":"Alka Yagnik & Arijit Singh","query":"Agar Tum Saath Ho Arijit Singh","artistId":"arijit-singh","videoId":"sK7riqg2mr4","channelName":"T-Series","official":true},
+        {"title":"Ae Dil Hai Mushkil","artist":"Arijit Singh","query":"Ae Dil Hai Mushkil Arijit Singh","artistId":"arijit-singh","videoId":"6FURuLYrR_Q","channelName":"Sony Music India","official":true},
+        {"title":"Hamari Adhuri Kahani","artist":"Arijit Singh","query":"Hamari Adhuri Kahani Arijit Singh","artistId":"arijit-singh","videoId":"f3FFOBrMmdg","channelName":"Sony Music India","official":true},
+        {"title":"Muskurane","artist":"Arijit Singh","query":"Muskurane Arijit Singh","artistId":"arijit-singh","videoId":"HQ4Ox7mLqds","channelName":"Sony Music India","official":true},
+        {"title":"Laal Ishq","artist":"Arijit Singh","query":"Laal Ishq Arijit Singh","artistId":"arijit-singh","videoId":"TuJXwmHmwhQ","channelName":"Eros Now Music","official":true},
+        {"title":"Phir Bhi Tumko Chaahunga","artist":"Arijit Singh & Shashaa Tirupati","query":"Phir Bhi Tumko Chaahunga Arijit Singh","artistId":"arijit-singh","videoId":"ztltXpAz1HE","channelName":"Zee Music Company","official":true},
+        {"title":"Best of Arijit Singh - 40 Super Hits","artist":"Arijit Singh","query":"Best of Arijit Singh 40 Super Hit Songs","artistId":"arijit-singh","videoId":"llLmk_eYHwE","channelName":"Sony Music India","official":true}
       ]
     },
     {
       "id": "india-official",
-      "title": "Official India",
+      "title": "Official India Hits",
       "subtitle": "Verified label releases",
       "songs": [
+        {"title":"Tum Hi Ho","artist":"Arijit Singh","query":"Tum Hi Ho Arijit Singh","artistId":"arijit-singh","videoId":"WWZxDA81JFk","channelName":"T-Series","official":true},
         {"title":"Channa Mereya","artist":"Arijit Singh","query":"Channa Mereya Arijit Singh","artistId":"arijit-singh","videoId":"jglVv0JfZUc","channelName":"Sony Music India","official":true},
         {"title":"Kesariya","artist":"Arijit Singh","query":"Kesariya Arijit Singh","artistId":"arijit-singh","videoId":"BddP6PYo2gs","channelName":"Sony Music India","official":true},
         {"title":"O Maahi","artist":"Arijit Singh","query":"O Maahi Arijit Singh","artistId":"arijit-singh","videoId":"Etkd-07gnxM","channelName":"T-Series","official":true},
-        {"title":"Apna Bana Le","artist":"Arijit Singh","query":"Apna Bana Le Arijit Singh","artistId":"arijit-singh","videoId":"ElZfdU54Cp8","channelName":"Zee Music Company","official":true}
+        {"title":"Apna Bana Le","artist":"Arijit Singh","query":"Apna Bana Le Arijit Singh","artistId":"arijit-singh","videoId":"ElZfdU54Cp8","channelName":"Zee Music Company","official":true},
+        {"title":"Agar Tum Saath Ho","artist":"Alka Yagnik & Arijit Singh","query":"Agar Tum Saath Ho Arijit Singh","artistId":"arijit-singh","videoId":"sK7riqg2mr4","channelName":"T-Series","official":true},
+        {"title":"Ae Dil Hai Mushkil","artist":"Arijit Singh","query":"Ae Dil Hai Mushkil Arijit Singh","artistId":"arijit-singh","videoId":"6FURuLYrR_Q","channelName":"Sony Music India","official":true},
+        {"title":"Hamari Adhuri Kahani","artist":"Arijit Singh","query":"Hamari Adhuri Kahani Arijit Singh","artistId":"arijit-singh","videoId":"f3FFOBrMmdg","channelName":"Sony Music India","official":true},
+        {"title":"Muskurane","artist":"Arijit Singh","query":"Muskurane Arijit Singh","artistId":"arijit-singh","videoId":"HQ4Ox7mLqds","channelName":"Sony Music India","official":true},
+        {"title":"Phir Bhi Tumko Chaahunga","artist":"Arijit Singh & Shashaa Tirupati","query":"Phir Bhi Tumko Chaahunga Arijit Singh","artistId":"arijit-singh","videoId":"ztltXpAz1HE","channelName":"Zee Music Company","official":true}
+      ]
+    },
+    {
+      "id": "phonk-aura",
+      "title": "Phonk & Aura",
+      "subtitle": "Official artist releases for edits and aura vibes",
+      "songs": [
+        {"title":"Murder In My Mind","artist":"Kordhell","query":"Murder In My Mind Kordhell","artistId":"","videoId":"RXRWE_XQ8aE","channelName":"KORDHELL","official":true},
+        {"title":"LAND OF FIRE","artist":"Kordhell","query":"Land of Fire Kordhell","artistId":"","videoId":"zXQZGA6MhJA","channelName":"KORDHELL","official":true},
+        {"title":"LIVE ANOTHER DAY","artist":"Kordhell","query":"Live Another Day Kordhell","artistId":"","videoId":"7pmUQJ5KAlU","channelName":"KORDHELL","official":true},
+        {"title":"RAVE","artist":"Dxrk ダーク","query":"RAVE Dxrk","artistId":"","videoId":"PTZgxW_3LIQ","channelName":"Dxrk ダーク","official":true},
+        {"title":"MIDNIGHT","artist":"PLAYAMANE x Nateki","query":"MIDNIGHT PLAYAMANE Nateki","artistId":"","videoId":"CVl7KbDGL-o","channelName":"Nateki","official":true},
+        {"title":"MONTAGEM - PR FUNK","artist":"S3BZS","query":"MONTAGEM PR FUNK S3BZS","artistId":"","videoId":"DQybFBDdauo","channelName":"S3BZS","official":true}
       ]
     }
   ]
