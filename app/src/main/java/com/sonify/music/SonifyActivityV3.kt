@@ -2,12 +2,16 @@ package com.sonify.music
 
 import android.Manifest
 import android.content.ComponentName
+import android.content.Intent
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
+import android.webkit.WebChromeClient
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -46,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -88,6 +93,7 @@ private sealed interface V3Screen {
     data class PlaylistDetail(val id: String) : V3Screen
     data class Artist(val id: String) : V3Screen
     data class Editorial(val title: String, val query: String) : V3Screen
+    data class OfficialVideo(val videoId: String, val title: String, val artist: String, val channel: String) : V3Screen
     data object Downloads : V3Screen
 }
 
@@ -336,7 +342,7 @@ private fun SonifyV3Root(controller: MediaController?) {
             playerExpanded -> playerExpanded = false
             screen is V3Screen.PlaylistDetail -> screen = V3Screen.Playlists
             screen is V3Screen.Playlists || screen is V3Screen.Liked || screen is V3Screen.Downloads -> screen = V3Screen.Library
-            screen is V3Screen.Category || screen is V3Screen.Artist || screen is V3Screen.Editorial -> screen = V3Screen.Home
+            screen is V3Screen.Category || screen is V3Screen.Artist || screen is V3Screen.Editorial || screen is V3Screen.OfficialVideo -> screen = V3Screen.Home
             screen is V3Screen.Search || screen is V3Screen.Library -> screen = V3Screen.Home
         }
     }
@@ -404,7 +410,12 @@ private fun SonifyV3Root(controller: MediaController?) {
                                 onCategory = { screen = V3Screen.Category(it) },
                                 onArtist = { screen = V3Screen.Artist(it) },
                                 onSearch = { screen = V3Screen.Search },
-                                onEditorial = { song -> screen = V3Screen.Editorial(song.title, song.query) }
+                                onEditorial = { song ->
+                                    if (song.videoId.isNotBlank()) {
+                                        dismissPlayer()
+                                        screen = V3Screen.OfficialVideo(song.videoId, song.title, song.artist, song.channelName)
+                                    }
+                                }
                             )
                             V3Screen.Search -> V3SearchScreen(
                                 liked = liked,
@@ -413,7 +424,11 @@ private fun SonifyV3Root(controller: MediaController?) {
                                 onToggleLike = ::toggleLike,
                                 onAddToPlaylist = { addTrackDialog = it },
                                 onPlayNext = ::playNext,
-                                onArtist = { screen = V3Screen.Artist(it) }
+                                onArtist = { screen = V3Screen.Artist(it) },
+                                onOfficial = { song ->
+                                    dismissPlayer()
+                                    screen = V3Screen.OfficialVideo(song.videoId, song.title, song.artist, song.channelName)
+                                }
                             )
                             V3Screen.Library -> V3LibraryScreen(
                                 likedCount = liked.size,
@@ -476,7 +491,11 @@ private fun SonifyV3Root(controller: MediaController?) {
                                         onAddToPlaylist = { addTrackDialog = it },
                                         onPlayNext = ::playNext,
                                         followed = followedArtists.contains(artist.id),
-                                        onToggleFollow = { toggleFollowArtist(artist.id) }
+                                        onToggleFollow = { toggleFollowArtist(artist.id) },
+                                        onOfficial = { song ->
+                                            dismissPlayer()
+                                            screen = V3Screen.OfficialVideo(song.videoId, song.title, song.artist, song.channelName)
+                                        }
                                     )
                                 }
                             }
@@ -489,6 +508,13 @@ private fun SonifyV3Root(controller: MediaController?) {
                                 onToggleLike = ::toggleLike,
                                 onAddToPlaylist = { addTrackDialog = it },
                                 onPlayNext = ::playNext
+                            )
+                            is V3Screen.OfficialVideo -> V3OfficialVideoScreen(
+                                videoId = target.videoId,
+                                title = target.title,
+                                artist = target.artist,
+                                channel = target.channel,
+                                onBack = { screen = V3Screen.Home }
                             )
                             V3Screen.Downloads -> V3DownloadsScreen(
                                 onBack = { screen = V3Screen.Library },
@@ -928,41 +954,22 @@ private fun V3HomeScreen(
 ) {
     val context = LocalContext.current
     var filter by remember { mutableStateOf("All") }
-    var liveTracks by remember { mutableStateOf<List<Track>>(emptyList()) }
     var editorial by remember { mutableStateOf(emptyList<com.sonify.music.data.EditorialSection>()) }
     var loading by remember { mutableStateOf(true) }
 
-    LaunchedEffect(filter) {
-        loading = true
-        try {
-            editorial = withTimeoutOrNull(8000) { EditorialFeed.load(context) }.orEmpty()
-            val incoming = withTimeoutOrNull(8000) {
-                when (filter) {
-                    "Hindi" -> AudiusCatalog.search("hindi bollywood", 30).getOrDefault(emptyList())
-                    "Pakistani" -> AudiusCatalog.search("pakistani urdu", 30).getOrDefault(emptyList())
-                    "Punjabi" -> AudiusCatalog.search("punjabi", 30).getOrDefault(emptyList())
-                    else -> AudiusCatalog.trending(32).getOrDefault(emptyList())
-                }
-            }.orEmpty()
-            liveTracks = if (incoming.isNotEmpty()) CatalogRegistry.remember(context, incoming) else emptyList()
-        } finally {
-            loading = false
-        }
+    LaunchedEffect(Unit) {
+        editorial = withTimeoutOrNull(9000) { EditorialFeed.load(context) }.orEmpty()
+        loading = false
     }
 
-    val visibleArtists = when (filter) {
-        "Hindi" -> ArtistDirectory.popular.filter { it.region.contains("India") }.take(12)
-        "Pakistani" -> ArtistDirectory.popular.filter { it.region.contains("Pakistan") }.take(12)
-        "Punjabi" -> ArtistDirectory.popular.filter { it.id in setOf("diljit-dosanjh", "ap-dhillon") }
-        else -> ArtistDirectory.popular.take(14)
-    }
     val visibleEditorial = when (filter) {
-        "Hindi" -> editorial.filter { it.id.contains("india") }
-        "Pakistani" -> editorial.filter { it.id.contains("pakistan") }
+        "Hindi" -> editorial.filter { it.id.contains("india", ignoreCase = true) }
+        "Pakistani" -> editorial.filter { it.id.contains("pakistan", ignoreCase = true) }
         else -> editorial
     }
-    val quickTracks = liveTracks.take(6).ifEmpty { DemoCatalog.featured.take(6) }
-    val cards = liveTracks.drop(6).take(12).ifEmpty { DemoCatalog.featured }
+    val officialSongs = visibleEditorial.flatMap { it.songs }.distinctBy { it.videoId }
+    val availableArtistIds = editorial.flatMap { it.songs }.map { it.artistId }.filter { it.isNotBlank() }.toSet()
+    val visibleArtists = ArtistDirectory.popular.filter { it.id in availableArtistIds }.take(12)
 
     LazyColumn(
         Modifier.fillMaxSize().background(V3Bg),
@@ -976,69 +983,89 @@ private fun V3HomeScreen(
                 Box(
                     Modifier.size(34.dp).clip(CircleShape).background(Color(0xFFB86B4A)),
                     contentAlignment = Alignment.Center
-                ) { Text("M", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp) }
+                ) { Text("S", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp) }
                 Spacer(Modifier.width(10.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
-                    items(listOf("All", "Hindi", "Pakistani", "Punjabi")) { label ->
+                    items(listOf("All", "Hindi", "Pakistani")) { label ->
                         V3FilterChip(label, selected = filter == label) { filter = label }
                     }
                 }
+                IconButton(onClick = onSearch) { Icon(Icons.Rounded.Search, "Search", tint = V3Text) }
             }
         }
 
-        if (quickTracks.isNotEmpty()) {
-            items(quickTracks.chunked(2)) { row ->
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    row.forEach { track ->
-                        V3QuickTrackCard(track, Modifier.weight(1f)) { onTrack(track) }
-                    }
-                    if (row.size == 1) Spacer(Modifier.weight(1f))
-                }
-            }
-        }
-
-        if (visibleArtists.isNotEmpty()) {
-            item { V3SectionTitle("Popular artists", if (filter == "All") "India & Pakistan" else filter) }
+        if (loading) {
             item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 14.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    items(visibleArtists, key = { it.id }) { artist ->
-                        V3ArtistCard(artist) { onArtist(artist.id) }
+                Row(Modifier.fillMaxWidth().padding(40.dp), horizontalArrangement = Arrangement.Center) {
+                    CircularProgressIndicator(color = V3Accent, modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
+                }
+            }
+        } else {
+            if (officialSongs.isNotEmpty()) {
+                items(officialSongs.take(6).chunked(2)) { row ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        row.forEach { song ->
+                            V3OfficialQuickCard(song, Modifier.weight(1f)) { onEditorial(song) }
+                        }
+                        if (row.size == 1) Spacer(Modifier.weight(1f))
                     }
                 }
             }
-        }
 
-        visibleEditorial.forEach { section ->
-            item { V3SectionTitle(section.title, section.subtitle) }
+            if (visibleArtists.isNotEmpty()) {
+                item { V3SectionTitle("Popular artists", "Official music only") }
+                item {
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        items(visibleArtists, key = { it.id }) { artist ->
+                            V3ArtistCard(artist) { onArtist(artist.id) }
+                        }
+                    }
+                }
+            }
+
+            visibleEditorial.forEach { section ->
+                item { V3SectionTitle(section.title, section.subtitle) }
+                item {
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(section.songs, key = { section.id + it.videoId }) { song ->
+                            V3EditorialSongCard(song) { onEditorial(song) }
+                        }
+                    }
+                }
+            }
+
+            item { V3SectionTitle("Browse", "Genres, moods and regional music") }
             item {
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 14.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(section.songs, key = { section.id + it.title + it.artist }) { song ->
-                        V3EditorialSongCard(song) { onEditorial(song) }
-                    }
+                    items(v3Categories, key = { it.id }) { c -> V3CategoryCard(c) { onCategory(c.id) } }
                 }
             }
         }
+    }
+}
 
-        item { V3SectionTitle("Recommended for today", "Live playable music") }
-        item {
-            if (loading && liveTracks.isEmpty()) {
-                Row(Modifier.fillMaxWidth().padding(28.dp), horizontalArrangement = Arrangement.Center) {
-                    CircularProgressIndicator(color = V3Accent, modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
-                }
-            } else {
-                LazyRow(contentPadding = PaddingValues(horizontal = 14.dp)) {
-                    items(cards, key = { it.id }) { V3AlbumCard(it, onTrack) }
-                }
-            }
+@Composable
+private fun V3OfficialQuickCard(song: EditorialSong, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Row(
+        modifier.height(58.dp).clip(RoundedCornerShape(5.dp)).background(V3Surface2).clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        V3ArtworkUrl(song.thumbnailUrl, Modifier.size(58.dp))
+        Column(Modifier.padding(horizontal = 9.dp).weight(1f)) {
+            Text(song.title, color = V3Text, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(song.artist, color = V3Muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -1094,14 +1121,19 @@ private fun v3Initials(name: String): String = name.split(" ").filter { it.isNot
 
 @Composable
 private fun V3ArtistPortrait(artist: ArtistProfile, modifier: Modifier) {
+    val context = LocalContext.current
     var image by remember(artist.id) { mutableStateOf<String?>(null) }
     var resolved by remember(artist.id) { mutableStateOf(false) }
     LaunchedEffect(artist.id) {
         image = ArtistDirectory.portrait(artist)
+        if (image.isNullOrBlank()) {
+            image = EditorialFeed.load(context).flatMap { it.songs }
+                .firstOrNull { it.artistId == artist.id && it.videoId.isNotBlank() }
+                ?.thumbnailUrl
+        }
         resolved = true
     }
     if (!image.isNullOrBlank()) {
-        val context = LocalContext.current
         AsyncImage(
             model = remember(image) {
                 ImageRequest.Builder(context)
@@ -1137,20 +1169,25 @@ private fun V3ArtistCard(artist: ArtistProfile, onClick: () -> Unit) {
 
 @Composable
 private fun V3EditorialSongCard(song: EditorialSong, onClick: () -> Unit) {
-    val profile = remember(song.artistId) { ArtistDirectory.get(song.artistId) }
     Column(Modifier.width(158.dp).clickable(onClick = onClick)) {
-        Box(Modifier.size(158.dp).clip(RoundedCornerShape(10.dp)).background(V3Surface2)) {
-            if (profile != null) {
-                V3ArtistPortrait(profile, Modifier.fillMaxSize())
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xB8050505)))))
-            } else {
-                Icon(Icons.Rounded.MusicNote, null, tint = V3Muted, modifier = Modifier.size(46.dp).align(Alignment.Center))
+        Box(Modifier.size(158.dp).clip(RoundedCornerShape(8.dp)).background(V3Surface2)) {
+            V3ArtworkUrl(song.thumbnailUrl, Modifier.fillMaxSize())
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xB8050505)))))
+            Surface(
+                color = Color(0xCC000000),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.align(Alignment.TopStart).padding(7.dp)
+            ) {
+                Text("OFFICIAL", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp))
             }
-            Text("SONIFY PICK", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Black, modifier = Modifier.align(Alignment.TopStart).padding(9.dp))
+            Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(30.dp).align(Alignment.BottomEnd).padding(5.dp))
         }
         Spacer(Modifier.height(8.dp))
         Text(song.title, color = V3Text, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(song.artist, color = V3Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (song.channelName.isNotBlank()) {
+            Text(song.channelName, color = V3Muted.copy(alpha = 0.8f), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 
@@ -1204,23 +1241,18 @@ private fun V3ArtistScreen(
     onAddToPlaylist: (Track) -> Unit,
     onPlayNext: (Track) -> Unit,
     followed: Boolean,
-    onToggleFollow: () -> Unit
+    onToggleFollow: () -> Unit,
+    onOfficial: (EditorialSong) -> Unit
 ) {
     val context = LocalContext.current
     var image by remember(artist.id) { mutableStateOf<String?>(null) }
-    var tracks by remember(artist.id) { mutableStateOf<List<Track>>(emptyList()) }
+    var officialSongs by remember(artist.id) { mutableStateOf<List<EditorialSong>>(emptyList()) }
     var loading by remember(artist.id) { mutableStateOf(true) }
 
     LaunchedEffect(artist.id) {
-        image = ArtistDirectory.portrait(artist)
-        val preferred = EditorialFeed.load(context).flatMap { it.songs }
-            .filter { it.artistId == artist.id }.map { it.title.lowercase() }
-        val online = AudiusCatalog.search(artist.musicQuery, 50).getOrDefault(emptyList())
-        val ordered = online.sortedBy { track ->
-            val index = preferred.indexOfFirst { wanted -> track.title.lowercase().contains(wanted) || wanted.contains(track.title.lowercase()) }
-            if (index >= 0) index else 1000
-        }
-        tracks = if (ordered.isNotEmpty()) CatalogRegistry.remember(context, ordered) else emptyList()
+        val sections = withTimeoutOrNull(9000) { EditorialFeed.load(context) }.orEmpty()
+        officialSongs = sections.flatMap { it.songs }.filter { it.artistId == artist.id }.distinctBy { it.videoId }
+        image = ArtistDirectory.portrait(artist) ?: officialSongs.firstOrNull()?.thumbnailUrl
         loading = false
     }
 
@@ -1249,27 +1281,102 @@ private fun V3ArtistScreen(
                         onClick = onToggleFollow,
                         shape = RoundedCornerShape(20.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = V3Text)
-                    ) {
-                        Text(if (followed) "Following" else "Follow", fontWeight = FontWeight.Bold)
-                    }
+                    ) { Text(if (followed) "Following" else "Follow", fontWeight = FontWeight.Bold) }
                 }
             }
         }
-        item { V3SectionTitle("Popular", "Playable tracks currently available in Sonify") }
+        item { V3SectionTitle("Official releases", "Verified label / artist uploads") }
         if (loading) {
             item { Row(Modifier.fillMaxWidth().padding(32.dp), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator(color = V3Accent) } }
-        } else if (tracks.isEmpty()) {
-            item { V3EmptyState("No licensed stream found here yet", "The artist page is ready. Full mainstream catalogs need a licensed music provider connection.") }
+        } else if (officialSongs.isEmpty()) {
+            item { V3EmptyState("Official catalog not connected for this artist yet", "No random user uploads are shown. Add this artist's official channel to Sonify's live catalog to populate this page.") }
         } else {
-            items(tracks, key = { it.id }) { track ->
-                V3FunctionalTrackRow(
-                    track = track,
-                    liked = liked.contains(track.id),
-                    onTrack = onTrack,
-                    onToggleLike = { onToggleLike(track.id) },
-                    onAddToPlaylist = { onAddToPlaylist(track) },
-                    onPlayNext = { onPlayNext(track) }
-                )
+            items(officialSongs, key = { it.videoId }) { song ->
+                Row(
+                    Modifier.fillMaxWidth().clickable { onOfficial(song) }.padding(horizontal = 18.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    V3ArtworkUrl(song.thumbnailUrl, Modifier.size(68.dp).clip(RoundedCornerShape(6.dp)))
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(song.title, color = V3Text, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1)
+                        Text(song.channelName, color = V3Muted, fontSize = 12.sp, maxLines = 1)
+                        Text("Official YouTube release", color = V3Accent, fontSize = 10.sp)
+                    }
+                    Icon(Icons.Rounded.PlayCircle, null, tint = V3Text, modifier = Modifier.size(30.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun V3OfficialVideoScreen(
+    videoId: String,
+    title: String,
+    artist: String,
+    channel: String,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    LazyColumn(
+        Modifier.fillMaxSize().background(V3Bg),
+        contentPadding = PaddingValues(bottom = 26.dp)
+    ) {
+        item {
+            Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, null, tint = V3Text) }
+                Column(Modifier.weight(1f)) {
+                    Text(title, color = V3Text, fontWeight = FontWeight.Black, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Official • $channel", color = V3Muted, fontSize = 11.sp, maxLines = 1)
+                }
+            }
+        }
+        item {
+            AndroidView(
+                modifier = Modifier.fillMaxWidth().height(235.dp).background(Color.Black),
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.mediaPlaybackRequiresUserGesture = true
+                        webViewClient = WebViewClient()
+                        webChromeClient = WebChromeClient()
+                        loadUrl("https://www.youtube.com/embed/$videoId?playsinline=1&rel=0")
+                    }
+                },
+                update = { web ->
+                    val wanted = "https://www.youtube.com/embed/$videoId?playsinline=1&rel=0"
+                    if (web.url != wanted) web.loadUrl(wanted)
+                }
+            )
+        }
+        item {
+            Column(Modifier.padding(18.dp)) {
+                Text(title, color = V3Text, fontSize = 25.sp, fontWeight = FontWeight.Black)
+                Text(artist, color = V3Muted, fontSize = 15.sp)
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Verified, null, tint = V3Accent, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Official YouTube source · $channel", color = V3Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(18.dp))
+                Button(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$videoId")))
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
+                    shape = RoundedCornerShape(22.dp)
+                ) {
+                    Icon(Icons.Rounded.OpenInNew, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Open on YouTube", fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(14.dp))
+                Text("Sonify uses YouTube's official player for these releases. It does not rip, re-upload or extract the audio.", color = V3Muted, fontSize = 11.sp)
             }
         }
     }
@@ -1404,132 +1511,118 @@ private fun V3SearchScreen(
     onToggleLike: (String) -> Unit,
     onAddToPlaylist: (Track) -> Unit,
     onPlayNext: (Track) -> Unit,
-    onArtist: (String) -> Unit
+    onArtist: (String) -> Unit,
+    onOfficial: (EditorialSong) -> Unit
 ) {
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<Track>>(emptyList()) }
-    var loading by remember { mutableStateOf(false) }
+    var sections by remember { mutableStateOf(emptyList<com.sonify.music.data.EditorialSection>()) }
+    var loading by remember { mutableStateOf(true) }
 
-    LaunchedEffect(query) {
-        val clean = query.trim()
-        if (clean.isBlank()) {
-            results = emptyList()
-            loading = false
-            return@LaunchedEffect
-        }
-        loading = true
-        delay(300)
-        val liveTracks = withTimeoutOrNull(8000) { AudiusCatalog.search(clean, 45).getOrDefault(emptyList()) }.orEmpty()
-        results = if (liveTracks.isNotEmpty()) CatalogRegistry.remember(context, liveTracks) else DemoCatalog.search(clean)
+    LaunchedEffect(Unit) {
+        sections = withTimeoutOrNull(9000) { EditorialFeed.load(context) }.orEmpty()
         loading = false
     }
 
-    LazyColumn(
-        Modifier.fillMaxSize().background(V3Bg),
-        contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 26.dp)
-    ) {
+    val officialResults = remember(query, sections) { EditorialFeed.search(sections, query) }
+    val artistMatches = remember(query) { ArtistDirectory.matching(query) }
+
+    LazyColumn(Modifier.fillMaxSize().background(V3Bg), contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp)) {
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(34.dp).clip(CircleShape).background(Color(0xFFB86B4A)), contentAlignment = Alignment.Center) {
-                    Text("M", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                }
-                Spacer(Modifier.width(10.dp))
-                Text("Search", color = V3Text, fontSize = 26.sp, fontWeight = FontWeight.Black)
-            }
+            Text("Search", color = V3Text, fontSize = 32.sp, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(14.dp))
             TextField(
                 value = query,
                 onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth().height(54.dp),
+                modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                placeholder = { Text("What do you want to listen to?", color = Color(0xFF4B4B4B), fontSize = 13.sp, fontWeight = FontWeight.SemiBold) },
+                placeholder = { Text("What do you want to listen to?", color = Color(0xFF555555)) },
                 leadingIcon = { Icon(Icons.Rounded.Search, null, tint = Color.Black) },
                 trailingIcon = {
                     if (query.isNotBlank()) IconButton(onClick = { query = "" }) { Icon(Icons.Rounded.Close, null, tint = Color.Black) }
                 },
-                shape = RoundedCornerShape(5.dp),
+                shape = RoundedCornerShape(6.dp),
                 colors = TextFieldDefaults.colors(
                     focusedContainerColor = Color.White,
                     unfocusedContainerColor = Color.White,
                     focusedTextColor = Color.Black,
                     unfocusedTextColor = Color.Black,
+                    cursorColor = Color.Black,
                     focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    cursorColor = Color.Black
+                    unfocusedIndicatorColor = Color.Transparent
                 )
             )
-            Spacer(Modifier.height(22.dp))
+            Spacer(Modifier.height(20.dp))
         }
 
-        if (query.isBlank()) {
+        if (loading) {
+            item { Row(Modifier.fillMaxWidth().padding(30.dp), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator(color = V3Accent) } }
+        } else if (query.isBlank()) {
             item {
-                Text("Browse all", color = V3Text, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                Text("Official releases", color = V3Text, fontSize = 21.sp, fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(12.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(sections.flatMap { it.songs }.distinctBy { it.videoId }.take(10), key = { it.videoId }) { song ->
+                        V3EditorialSongCard(song) { onOfficial(song) }
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
+                Text("Browse all", color = V3Text, fontSize = 21.sp, fontWeight = FontWeight.Black)
                 Spacer(Modifier.height(12.dp))
             }
             items(v3Categories.chunked(2)) { row ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     row.forEach { category ->
-                        V3SearchCategoryTile(category, Modifier.weight(1f)) { onCategory(category.id) }
+                        val shade = when (category.id) {
+                            "pakistani" -> Color(0xFF174D35)
+                            "bollywood" -> Color(0xFF7A3325)
+                            "punjabi" -> Color(0xFF765315)
+                            "sad" -> Color(0xFF344A6B)
+                            "romantic" -> Color(0xFF7A2F4C)
+                            else -> Color(0xFF303030)
+                        }
+                        Box(
+                            Modifier.weight(1f).height(96.dp).clip(RoundedCornerShape(8.dp)).background(shade).clickable { onCategory(category.id) }.padding(12.dp)
+                        ) {
+                            Text(category.title, color = Color.White, fontWeight = FontWeight.Black, fontSize = 16.sp)
+                            Icon(Icons.Rounded.MusicNote, null, tint = Color.White.copy(alpha = .8f), modifier = Modifier.size(34.dp).align(Alignment.BottomEnd))
+                        }
                     }
-                    if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(10.dp))
             }
-        } else if (loading) {
-            item { Row(Modifier.fillMaxWidth().padding(36.dp), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator(color = V3Accent) } }
-        } else if (results.isEmpty() && ArtistDirectory.matching(query).isEmpty()) {
-            item { V3EmptyState("No results", "Try another song, artist, language or genre.") }
         } else {
-            val artistMatches = ArtistDirectory.matching(query)
             if (artistMatches.isNotEmpty()) {
                 item {
-                    Text("Artists", color = V3Text, fontWeight = FontWeight.Black, fontSize = 20.sp)
+                    Text("Artists", color = V3Text, fontSize = 20.sp, fontWeight = FontWeight.Black)
                     Spacer(Modifier.height(10.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        items(artistMatches, key = { it.id }) { artist -> V3ArtistCard(artist) { onArtist(artist.id) } }
+                        items(artistMatches.take(10), key = { it.id }) { artist -> V3ArtistCard(artist) { onArtist(artist.id) } }
                     }
-                    Spacer(Modifier.height(20.dp))
-                    Text("Songs", color = V3Text, fontWeight = FontWeight.Black, fontSize = 20.sp)
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(22.dp))
                 }
             }
-            items(results, key = { it.id }) { track ->
-                V3FunctionalTrackRow(
-                    track,
-                    liked.contains(track.id),
-                    onTrack,
-                    { onToggleLike(track.id) },
-                    { onAddToPlaylist(track) },
-                    { onPlayNext(track) }
-                )
+            if (officialResults.isNotEmpty()) {
+                item { Text("Official songs", color = V3Text, fontSize = 20.sp, fontWeight = FontWeight.Black) }
+                items(officialResults, key = { it.videoId }) { song ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { onOfficial(song) }.padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        V3ArtworkUrl(song.thumbnailUrl, Modifier.size(62.dp).clip(RoundedCornerShape(5.dp)))
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(song.title, color = V3Text, fontWeight = FontWeight.Bold, maxLines = 1)
+                            Text(song.artist, color = V3Muted, fontSize = 12.sp, maxLines = 1)
+                            Text("Official • ${song.channelName}", color = V3Accent, fontSize = 10.sp, maxLines = 1)
+                        }
+                        Icon(Icons.Rounded.ChevronRight, null, tint = V3Muted)
+                    }
+                }
+            } else if (artistMatches.isEmpty()) {
+                item { V3EmptyState("No official match yet", "Sonify is currently showing verified official releases only. More official channels can be added to the live catalog without reinstalling the app.") }
             }
         }
-    }
-}
-
-private fun v3CategoryColor(id: String): Color = when (id) {
-    "bollywood" -> Color(0xFF8E1B55)
-    "pakistani" -> Color(0xFF0D735D)
-    "punjabi" -> Color(0xFFC04B19)
-    "sad" -> Color(0xFF477D95)
-    "romantic" -> Color(0xFF9D3553)
-    "chill" -> Color(0xFF5D7887)
-    "workout" -> Color(0xFF7B398F)
-    "hiphop" -> Color(0xFFB85B20)
-    "electronic" -> Color(0xFF136A80)
-    "rnb" -> Color(0xFF8A3862)
-    "rock" -> Color(0xFF16705A)
-    else -> Color(0xFF5A4B75)
-}
-
-@Composable
-private fun V3SearchCategoryTile(category: V3Category, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Box(
-        modifier.height(92.dp).clip(RoundedCornerShape(5.dp)).background(v3CategoryColor(category.id)).clickable(onClick = onClick).padding(12.dp)
-    ) {
-        Text(category.title, color = Color.White, fontWeight = FontWeight.Black, fontSize = 16.sp, modifier = Modifier.align(Alignment.TopStart).fillMaxWidth(0.75f))
-        Icon(Icons.Rounded.MusicNote, null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(38.dp).graphicsLayer(rotationZ = 18f).align(Alignment.BottomEnd))
     }
 }
 
