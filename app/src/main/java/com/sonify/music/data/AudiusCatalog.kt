@@ -15,8 +15,8 @@ object AudiusCatalog {
     private const val BASE_URL = "https://api.audius.co/v1"
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(16, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
@@ -24,6 +24,12 @@ object AudiusCatalog {
     suspend fun trending(limit: Int = 30): Result<List<Track>> = requestTracks(
         path = "/tracks/trending",
         params = mapOf("limit" to limit.coerceIn(1, 100).toString(), "time" to "week")
+    )
+
+    suspend fun trendingVerified(limit: Int = 30): Result<List<Track>> = requestTracks(
+        path = "/tracks/trending",
+        params = mapOf("limit" to limit.coerceIn(1, 100).toString(), "time" to "week"),
+        verifiedOnly = true
     )
 
     suspend fun search(query: String, limit: Int = 35): Result<List<Track>> {
@@ -39,6 +45,20 @@ object AudiusCatalog {
         )
     }
 
+    suspend fun searchVerified(query: String, limit: Int = 35): Result<List<Track>> {
+        val clean = query.trim()
+        if (clean.isBlank()) return Result.success(emptyList())
+        return requestTracks(
+            path = "/tracks/search",
+            params = mapOf(
+                "query" to clean,
+                "limit" to limit.coerceIn(1, 100).toString(),
+                "sort_method" to "relevant"
+            ),
+            verifiedOnly = true
+        )
+    }
+
     suspend fun downloadable(query: String, limit: Int = 35): Result<List<Track>> {
         val clean = query.trim()
         if (clean.isBlank()) return Result.success(emptyList())
@@ -49,13 +69,15 @@ object AudiusCatalog {
                 "limit" to limit.coerceIn(1, 100).toString(),
                 "sort_method" to "relevant",
                 "only_downloadable" to "true"
-            )
+            ),
+            verifiedOnly = true
         )
     }
 
     private suspend fun requestTracks(
         path: String,
-        params: Map<String, String>
+        params: Map<String, String>,
+        verifiedOnly: Boolean = false
     ): Result<List<Track>> = withContext(Dispatchers.IO) {
         runCatching {
             val builder = (BASE_URL + path).toHttpUrl().newBuilder()
@@ -67,7 +89,7 @@ object AudiusCatalog {
             val request = Request.Builder()
                 .url(builder.build())
                 .header("Accept", "application/json")
-                .header("User-Agent", "Sonify-Android/0.2")
+                .header("User-Agent", "Sonify-Android/0.3")
                 .build()
 
             client.newCall(request).execute().use { response ->
@@ -79,6 +101,9 @@ object AudiusCatalog {
                 buildList {
                     for (i in 0 until data.length()) {
                         val item = data.optJSONObject(i) ?: continue
+                        val user = item.optJSONObject("user")
+                        val verified = user?.optBoolean("is_verified", user.optBoolean("isVerified", false)) ?: false
+                        if (verifiedOnly && !verified) continue
                         item.toTrackOrNull()?.let(::add)
                     }
                 }.distinctBy { it.id }
@@ -104,8 +129,7 @@ object AudiusCatalog {
             artwork?.optString("_480x480"),
             artwork?.optString("150x150"),
             artwork?.optString("_150x150")
-        ).firstOrNull { !it.isNullOrBlank() }
-            ?: ""
+        ).firstOrNull { !it.isNullOrBlank() } ?: ""
 
         val key = BuildConfig.AUDIUS_API_KEY.trim()
         val streamUrl = "$BASE_URL/tracks/$rawId/stream" +
@@ -119,7 +143,7 @@ object AudiusCatalog {
             artist = artist,
             artworkUrl = artworkUrl,
             streamUrl = streamUrl,
-            source = "Audius",
+            source = "Audius Verified",
             durationMs = optLong("duration", 0L).coerceAtLeast(0L) * 1000L,
             downloadable = canDownload
         )
