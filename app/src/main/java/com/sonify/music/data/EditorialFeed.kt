@@ -37,20 +37,26 @@ object EditorialFeed {
     private const val PREFS = "sonify_editorial"
     private const val KEY_JSON = "cached_json"
 
+    @Volatile
+    private var memoryCache: List<EditorialSection>? = null
+
     private val client = OkHttpClient.Builder()
-        .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(6, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
+        .callTimeout(10, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
 
     suspend fun load(context: Context): List<EditorialSection> = withContext(Dispatchers.IO) {
+        memoryCache?.takeIf { it.isNotEmpty() }?.let { return@withContext it }
+
         val remote = runCatching {
             val request = Request.Builder()
                 .url(URL)
                 .header("Accept", "application/json")
                 .header("Cache-Control", "no-cache")
-                .header("User-Agent", "SonifyMusic/1.2")
+                .header("User-Agent", "SonifyMusic/1.3")
                 .build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) error("Editorial HTTP ${response.code}")
@@ -66,7 +72,9 @@ object EditorialFeed {
         val cached = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY_JSON, null).orEmpty()
 
-        parse(remote.ifBlank { cached }).ifEmpty { fallback }
+        val resolved = parse(remote.ifBlank { cached }).ifEmpty { fallback }
+        memoryCache = resolved
+        resolved
     }
 
     private fun parse(json: String): List<EditorialSection> {
