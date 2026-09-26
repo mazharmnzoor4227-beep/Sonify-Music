@@ -1,1 +1,1 @@
-Build Sonify after switching Home, Search, artist pages and song cards to verified official YouTube releases with real thumbnails and in-app official playback.
+Build Sonify after fixing official in-app WebView playback, Error 153 identity headers, smoother Media3 polling, catalog caching, and verified-only open music search.
