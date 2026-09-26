@@ -1,1 +1,1 @@
-Build Sonify after startup crash fix, resilient artist portrait loading, network timeout protection, and header stability polish.
+Build Sonify after Spotify-inspired premium UI redesign with working Home filters, Search browse grid, Library filters, Follow artists, Create playlist, and no Premium tab.
