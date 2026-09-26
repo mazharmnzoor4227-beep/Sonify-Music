@@ -252,16 +252,25 @@ private fun SonifyV3Root(controller: MediaController?) {
     LaunchedEffect(controller) {
         while (true) {
             controller?.let { player ->
-                positionMs = player.currentPosition.coerceAtLeast(0L)
-                durationMs = player.duration.takeIf { it > 0L } ?: 1L
-                isPlaying = player.isPlaying
-                shuffle = player.shuffleModeEnabled
-                repeatMode = player.repeatMode
+                val nextPosition = player.currentPosition.coerceAtLeast(0L)
+                val nextDuration = player.duration.takeIf { it > 0L } ?: 1L
+                val nextPlaying = player.isPlaying
+                val nextShuffle = player.shuffleModeEnabled
+                val nextRepeat = player.repeatMode
+
+                if (positionMs != nextPosition) positionMs = nextPosition
+                if (durationMs != nextDuration) durationMs = nextDuration
+                if (isPlaying != nextPlaying) isPlaying = nextPlaying
+                if (shuffle != nextShuffle) shuffle = nextShuffle
+                if (repeatMode != nextRepeat) repeatMode = nextRepeat
+
                 player.currentMediaItem?.mediaId?.let { id ->
-                    CatalogRegistry.get(id)?.let { current = it }
+                    if (current?.id != id) CatalogRegistry.get(id)?.let { current = it }
                 }
             }
-            delay(300)
+            // 300ms forced frequent whole-screen recomposition on slower phones.
+            // 750ms keeps the progress bar responsive while making scrolling much smoother.
+            delay(750)
         }
     }
 
@@ -1138,7 +1147,7 @@ private fun V3ArtistPortrait(artist: ArtistProfile, modifier: Modifier) {
             model = remember(image) {
                 ImageRequest.Builder(context)
                     .data(image)
-                    .crossfade(true)
+                    .crossfade(false)
                     .build()
             },
             contentDescription = artist.name,
@@ -1206,7 +1215,7 @@ private fun V3EditorialResultsScreen(
     var tracks by remember(query) { mutableStateOf<List<Track>>(emptyList()) }
     var loading by remember(query) { mutableStateOf(true) }
     LaunchedEffect(query) {
-        val found = AudiusCatalog.search(query, 30).getOrDefault(emptyList())
+        val found = AudiusCatalog.searchVerified(query, 30).getOrDefault(emptyList())
         tracks = if (found.isNotEmpty()) CatalogRegistry.remember(context, found) else emptyList()
         loading = false
     }
@@ -1318,7 +1327,21 @@ private fun V3OfficialVideoScreen(
     channel: String,
     onBack: () -> Unit
 ) {
-    val context = LocalContext.current
+    var webView by remember(videoId) { mutableStateOf<WebView?>(null) }
+    val embedUrl = remember(videoId) {
+        "https://www.youtube.com/embed/$videoId?playsinline=1&rel=0&origin=https%3A%2F%2Fgithub.com"
+    }
+    val headers = remember { mapOf("Referer" to "https://github.com/mazharmnzoor4227-beep/Sonify-Music/") }
+
+    DisposableEffect(videoId) {
+        onDispose {
+            webView?.stopLoading()
+            webView?.loadUrl("about:blank")
+            webView?.destroy()
+            webView = null
+        }
+    }
+
     LazyColumn(
         Modifier.fillMaxSize().background(V3Bg),
         contentPadding = PaddingValues(bottom = 26.dp)
@@ -1328,7 +1351,7 @@ private fun V3OfficialVideoScreen(
                 IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, null, tint = V3Text) }
                 Column(Modifier.weight(1f)) {
                     Text(title, color = V3Text, fontWeight = FontWeight.Black, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("Official • $channel", color = V3Muted, fontSize = 11.sp, maxLines = 1)
+                    Text("Official · $channel", color = V3Muted, fontSize = 11.sp, maxLines = 1)
                 }
             }
         }
@@ -1337,17 +1360,21 @@ private fun V3OfficialVideoScreen(
                 modifier = Modifier.fillMaxWidth().height(235.dp).background(Color.Black),
                 factory = { ctx ->
                     WebView(ctx).apply {
+                        webView = this
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.mediaPlaybackRequiresUserGesture = true
+                        settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+                        settings.setSupportZoom(false)
                         webViewClient = WebViewClient()
                         webChromeClient = WebChromeClient()
-                        loadUrl("https://www.youtube.com/embed/$videoId?playsinline=1&rel=0")
+                        setBackgroundColor(android.graphics.Color.BLACK)
+                        loadUrl(embedUrl, headers)
                     }
                 },
                 update = { web ->
-                    val wanted = "https://www.youtube.com/embed/$videoId?playsinline=1&rel=0"
-                    if (web.url != wanted) web.loadUrl(wanted)
+                    webView = web
+                    if (web.url?.contains(videoId) != true) web.loadUrl(embedUrl, headers)
                 }
             )
         }
@@ -1359,24 +1386,22 @@ private fun V3OfficialVideoScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.Verified, null, tint = V3Accent, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Official YouTube source · $channel", color = V3Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text("Official source · $channel", color = V3Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
                 Spacer(Modifier.height(18.dp))
-                Button(
-                    onClick = {
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$videoId")))
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
-                    shape = RoundedCornerShape(22.dp)
-                ) {
-                    Icon(Icons.Rounded.OpenInNew, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Open on YouTube", fontWeight = FontWeight.Bold)
+                Surface(color = V3Surface2, shape = RoundedCornerShape(14.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.PlayCircle, null, tint = V3Accent)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Play it above without leaving Sonify", color = V3Text, fontWeight = FontWeight.SemiBold)
+                    }
                 }
                 Spacer(Modifier.height(14.dp))
-                Text("Sonify uses YouTube's official player for these releases. It does not rip, re-upload or extract the audio.", color = V3Muted, fontSize = 11.sp)
+                Text(
+                    "Official YouTube playback stays inside Sonify. Offline download is only shown for sources that explicitly permit downloading.",
+                    color = V3Muted,
+                    fontSize = 11.sp
+                )
             }
         }
     }
@@ -1447,7 +1472,7 @@ private fun V3CategoryScreen(
     var liveAvailable by remember(category.id) { mutableStateOf(false) }
 
     LaunchedEffect(category.id) {
-        val result = AudiusCatalog.search(category.query, 45)
+        val result = AudiusCatalog.searchVerified(category.query, 45)
         val onlineTracks = result.getOrDefault(emptyList())
         if (onlineTracks.isNotEmpty()) {
             tracks = CatalogRegistry.remember(context, onlineTracks)
