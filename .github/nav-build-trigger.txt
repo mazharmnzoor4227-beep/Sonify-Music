@@ -1,1 +1,1 @@
-Build Sonify after Spotify-inspired premium UI redesign with working Home filters, Search browse grid, Library filters, Follow artists, Create playlist, and no Premium tab.
+Build Sonify after switching Home, Search, artist pages and song cards to verified official YouTube releases with real thumbnails and in-app official playback.
