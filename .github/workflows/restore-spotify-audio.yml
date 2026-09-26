@@ -1,0 +1,33 @@
+name: Restore Spotify Audio Flow
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'tools/restore_spotify_audio.py'
+      - '.github/workflows/restore-spotify-audio.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Restore audio-first player flow
+        run: python tools/restore_spotify_audio.py
+      - name: Commit restored player
+        run: |
+          if git diff --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/sonify/music/SonifyActivityV3.kt
+          git commit -m "Restore Spotify-style in-app audio player"
+          git push
