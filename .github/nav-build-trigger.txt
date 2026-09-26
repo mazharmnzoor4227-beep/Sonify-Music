@@ -1,1 +1,1 @@
-Build Sonify after fixing official in-app WebView playback, Error 153 identity headers, smoother Media3 polling, catalog caching, and verified-only open music search.
+Build Sonify after restoring Spotify-style audio-only playback, removing the YouTube/WebView player flow, and keeping the smooth morphing full player + mini-player experience.
